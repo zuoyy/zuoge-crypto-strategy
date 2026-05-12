@@ -1,0 +1,7 @@
+interface:
+  display_name: "Zuoge Crypto Strategy"
+  short_description: "Author safe realtime crypto strategy candidates"
+  default_prompt: "Use $zuoge-crypto-strategy to create, validate, backtest, report, and submit-review realtime crypto strategy candidates. First confirm the crypto-trader project root from the current workspace or ZUOGE_CRYPTO_PROJECT_ROOT, then read ZUOGE_CRYPTO_BASE_URL and ZUOGE_CRYPTO_API_KEY and fetch /api/v1/agent/strategy/capabilities with Authorization: Bearer. Stop if the project root or agent API capability catalog cannot be confirmed. Write only candidate strategies under strategy/strategies/candidates/, use runtime.strategy_sdk, implement discover(universe) plus build_signals_from_context(context), emit candidates before warmup and standard signal envelopes only after warm context, keep decision_logs for SIGNAL/NO_TRADE/WAIT_WARMUP/DEGRADED_SKIP/VALIDATION_FAILED, run crypto-skill candidate check/test/backtest/report, and submit-review only after all validation passes. Never write enabled strategies, approve, deploy, call non-agent routes, use WebUI cookies, access secrets, publish signals, or call risk/execution/exchange APIs."
+
+policy:
+  allow_implicit_invocation: true

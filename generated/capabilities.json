@@ -1,0 +1,147 @@
+{
+    "agent_api": {
+        "auth": "Authorization: Bearer ${ZUOGE_CRYPTO_API_KEY}",
+        "endpoints": [
+            "GET /api/v1/agent/strategy/capabilities",
+            "GET /api/v1/agent/market/subscriptions",
+            "GET /api/v1/agent/strategy/candidates",
+            "GET /api/v1/agent/strategy/decision-logs",
+            "POST /api/v1/agent/strategy/research",
+            "GET /api/v1/agent/strategy/research/{research_id}",
+            "POST /api/v1/agent/strategy-candidates",
+            "GET /api/v1/agent/strategy-candidates",
+            "GET /api/v1/agent/strategy-candidates/{candidate_id}",
+            "POST /api/v1/agent/strategy-candidates/{candidate_id}/check",
+            "POST /api/v1/agent/strategy-candidates/{candidate_id}/test",
+            "POST /api/v1/agent/strategy-candidates/{candidate_id}/backtest",
+            "GET /api/v1/agent/strategy-candidates/{candidate_id}/report",
+            "POST /api/v1/agent/strategy-candidates/{candidate_id}/submit-review"
+        ],
+        "prefix": "/api/v1/agent"
+    },
+    "catalog_version": "strategy-capabilities",
+    "context_schema_version": "strategy-context",
+    "context": {
+        "entrypoint": "RealtimeSymbolState",
+        "candidate_key": [
+            "strategy_id",
+            "symbol",
+            "side"
+        ],
+        "candidate_schema": {
+            "meaning": "strategy-private side-aware candidate; candidates do not execute until full symbol context is warm",
+            "required": [
+                "strategy_id",
+                "symbol",
+                "side",
+                "score",
+                "reason",
+                "required_dependencies",
+                "ttl_seconds"
+            ],
+            "side": [
+                "long",
+                "short"
+            ]
+        },
+        "context_subject": "strategy.context.delta.{symbol}",
+        "runtime_interface": {
+            "class": "Strategy",
+            "method": "discover(self, universe: dict) -> list[dict]; build_signals_from_context(self, context: dict) -> list[dict]",
+            "notes": [
+                "discover consumes strategy.universe.delta and may only return candidates",
+                "build_signals_from_context consumes warmed strategy.context.delta.{symbol}",
+                "each returned signal must target exactly one warmed candidate symbol",
+                "return [] when there is no opportunity or context is not warm"
+            ]
+        },
+        "universe_subject": "strategy.universe.delta",
+        "warmup_schema": {
+            "default_max_data_age_ms": 300,
+            "required_dependencies": [
+                "l1_book",
+                "l2_book_top",
+                "agg_trade",
+                "mark_price",
+                "kline:<interval>"
+            ],
+            "statuses": [
+                "warming",
+                "ready",
+                "degraded",
+                "expired"
+            ]
+        },
+        "candidate_statuses": [
+            "selected",
+            "requested",
+            "warming",
+            "ready",
+            "stale",
+            "expired",
+            "released"
+        ],
+        "dependency_stream_mapping": {
+            "agg_trade": "aggTrade",
+            "force_order": "forceOrder",
+            "kline:<interval>": "kline_<interval>",
+            "l1_book": "bookTicker",
+            "l2_book_top": "depth20@100ms",
+            "mark_price": "markPrice@1s",
+            "mini_ticker": "miniTicker",
+            "ticker_24h": "ticker"
+        }
+    },
+    "feature_engine": {
+        "algorithm_version": "realtime-feature-engine",
+        "required_dependencies": [
+            "l1_book",
+            "l2_book_top"
+        ],
+        "optional_dependencies": [
+            "agg_trade",
+            "kline",
+            "mark_price",
+            "ticker_24h",
+            "mini_ticker",
+            "force_order"
+        ]
+    },
+    "signal": {
+        "event_schema": "StrategySignalEvent",
+        "required_fields": [
+            "schema_version",
+            "signal_id",
+            "source",
+            "strategy_id",
+            "strategy_version",
+            "context_id",
+            "symbol",
+            "intent",
+            "price_ref",
+            "quote_side",
+            "market_seq",
+            "data_freshness_ms",
+            "max_data_age_ms",
+            "max_slippage_bps",
+            "signal_time",
+            "expire_ms",
+            "trade_params",
+            "trace_id"
+        ]
+    },
+    "forbidden_capabilities": [
+        "network access",
+        "database access",
+        "exchange access",
+        "subprocess execution",
+        "NATS publish or direct strategy.signals publish",
+        "writing enabled strategies"
+    ],
+    "nats_control_plane": {
+        "subscription_release": "market.subscription.release",
+        "subscription_request": "market.subscription.request",
+        "subscription_status": "market.subscription.status.{symbol}",
+        "universe": "strategy.universe.delta"
+    }
+}

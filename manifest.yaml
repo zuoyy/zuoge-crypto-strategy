@@ -1,0 +1,59 @@
+name: zuoge-crypto-strategy
+version: 2.0.0
+description: >
+  Agent API-first skill for realtime context delta strategy candidate authoring,
+  validation, backtesting, reporting, and submit-review.
+project_root_env: ZUOGE_CRYPTO_PROJECT_ROOT
+project_root_detection:
+  required_files:
+    - cmd/crypto-skill/main.go
+    - strategy/runtime/strategy_sdk.py
+
+required_env:
+  - ZUOGE_CRYPTO_BASE_URL
+  - ZUOGE_CRYPTO_API_KEY
+
+agent_api:
+  prefix: /api/v1/agent
+  auth_header: "Authorization: Bearer ${ZUOGE_CRYPTO_API_KEY}"
+
+allowed_write_paths:
+  - ${PROJECT_ROOT}/strategy/strategies/candidates/
+  - ${PROJECT_ROOT}/strategy/reports/
+  - ${PROJECT_ROOT}/research/
+  - ${PROJECT_ROOT}/tmp/ai-skill/
+
+readonly_paths:
+  - ${SKILL_ROOT}/generated/
+  - ${SKILL_ROOT}/references/
+  - ${PROJECT_ROOT}/pkg/contracts/
+  - ${PROJECT_ROOT}/docs/
+
+forbidden_paths:
+  - ${PROJECT_ROOT}/.env
+  - ${PROJECT_ROOT}/strategy/strategies/enabled/
+  - ${PROJECT_ROOT}/internal/risk/
+  - ${PROJECT_ROOT}/internal/execution/
+  - ${PROJECT_ROOT}/internal/exchange/
+  - ${PROJECT_ROOT}/secrets/
+  - ${PROJECT_ROOT}/keys/
+
+allowed_commands:
+  - crypto-skill capabilities show
+  - crypto-skill capabilities export
+  - crypto-skill research create
+  - crypto-skill research show
+  - crypto-skill candidate new
+  - crypto-skill candidate list
+  - crypto-skill candidate show
+  - crypto-skill candidate check
+  - crypto-skill candidate test
+  - crypto-skill candidate backtest
+  - crypto-skill candidate report
+  - crypto-skill candidate submit-review
+
+forbidden_commands:
+  - crypto-skill candidate promote-enabled
+  - psql
+  - curl non-agent routes
+  - any exchange order command

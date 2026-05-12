@@ -1,0 +1,52 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "RealtimeSymbolState",
+    "type": "object",
+    "required": [
+        "schema_version",
+        "context_id",
+        "symbol",
+        "market_seq",
+        "computed_at",
+        "snapshot"
+    ],
+    "properties": {
+        "schema_version": {
+            "type": "string"
+        },
+        "context_id": {
+            "type": "string"
+        },
+        "symbol": {
+            "type": "string"
+        },
+        "market_seq": {
+            "type": "integer"
+        },
+        "computed_at": {
+            "type": "string",
+            "format": "date-time"
+        },
+        "snapshot": {
+            "type": "object"
+        },
+        "microstructure": {
+            "type": "object"
+        },
+        "trade_flow": {
+            "type": "object"
+        },
+        "klines": {
+            "type": "object"
+        },
+        "derivatives": {
+            "type": "object"
+        },
+        "ticker": {
+            "type": "object"
+        },
+        "liquidations": {
+            "type": "object"
+        }
+    }
+}
