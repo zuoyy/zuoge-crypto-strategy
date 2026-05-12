@@ -1,147 +1,477 @@
 {
-    "agent_api": {
-        "auth": "Authorization: Bearer ${ZUOGE_CRYPTO_API_KEY}",
-        "endpoints": [
-            "GET /api/v1/agent/strategy/capabilities",
-            "GET /api/v1/agent/market/subscriptions",
-            "GET /api/v1/agent/strategy/candidates",
-            "GET /api/v1/agent/strategy/decision-logs",
-            "POST /api/v1/agent/strategy/research",
-            "GET /api/v1/agent/strategy/research/{research_id}",
-            "POST /api/v1/agent/strategy-candidates",
-            "GET /api/v1/agent/strategy-candidates",
-            "GET /api/v1/agent/strategy-candidates/{candidate_id}",
-            "POST /api/v1/agent/strategy-candidates/{candidate_id}/check",
-            "POST /api/v1/agent/strategy-candidates/{candidate_id}/test",
-            "POST /api/v1/agent/strategy-candidates/{candidate_id}/backtest",
-            "GET /api/v1/agent/strategy-candidates/{candidate_id}/report",
-            "POST /api/v1/agent/strategy-candidates/{candidate_id}/submit-review"
-        ],
-        "prefix": "/api/v1/agent"
-    },
-    "catalog_version": "strategy-capabilities",
-    "context_schema_version": "strategy-context",
-    "context": {
-        "entrypoint": "RealtimeSymbolState",
-        "candidate_key": [
-            "strategy_id",
-            "symbol",
-            "side"
-        ],
-        "candidate_schema": {
-            "meaning": "strategy-private side-aware candidate; candidates do not execute until full symbol context is warm",
-            "required": [
-                "strategy_id",
-                "symbol",
-                "side",
-                "score",
-                "reason",
-                "required_dependencies",
-                "ttl_seconds"
-            ],
-            "side": [
-                "long",
-                "short"
-            ]
-        },
-        "context_subject": "strategy.context.delta.{symbol}",
-        "runtime_interface": {
-            "class": "Strategy",
-            "method": "discover(self, universe: dict) -> list[dict]; build_signals_from_context(self, context: dict) -> list[dict]",
-            "notes": [
-                "discover consumes strategy.universe.delta and may only return candidates",
-                "build_signals_from_context consumes warmed strategy.context.delta.{symbol}",
-                "each returned signal must target exactly one warmed candidate symbol",
-                "return [] when there is no opportunity or context is not warm"
-            ]
-        },
-        "universe_subject": "strategy.universe.delta",
-        "warmup_schema": {
-            "default_max_data_age_ms": 300,
-            "required_dependencies": [
-                "l1_book",
-                "l2_book_top",
-                "agg_trade",
-                "mark_price",
-                "kline:<interval>"
-            ],
-            "statuses": [
-                "warming",
-                "ready",
-                "degraded",
-                "expired"
-            ]
-        },
-        "candidate_statuses": [
-            "selected",
-            "requested",
-            "warming",
-            "ready",
-            "stale",
-            "expired",
-            "released"
-        ],
-        "dependency_stream_mapping": {
-            "agg_trade": "aggTrade",
-            "force_order": "forceOrder",
-            "kline:<interval>": "kline_<interval>",
-            "l1_book": "bookTicker",
-            "l2_book_top": "depth20@100ms",
-            "mark_price": "markPrice@1s",
-            "mini_ticker": "miniTicker",
-            "ticker_24h": "ticker"
-        }
-    },
-    "feature_engine": {
-        "algorithm_version": "realtime-feature-engine",
-        "required_dependencies": [
-            "l1_book",
-            "l2_book_top"
-        ],
-        "optional_dependencies": [
-            "agg_trade",
-            "kline",
-            "mark_price",
-            "ticker_24h",
-            "mini_ticker",
-            "force_order"
-        ]
-    },
-    "signal": {
-        "event_schema": "StrategySignalEvent",
-        "required_fields": [
-            "schema_version",
-            "signal_id",
-            "source",
-            "strategy_id",
-            "strategy_version",
-            "context_id",
-            "symbol",
-            "intent",
-            "price_ref",
-            "quote_side",
-            "market_seq",
-            "data_freshness_ms",
-            "max_data_age_ms",
-            "max_slippage_bps",
-            "signal_time",
-            "expire_ms",
-            "trade_params",
-            "trace_id"
-        ]
-    },
-    "forbidden_capabilities": [
-        "network access",
-        "database access",
-        "exchange access",
-        "subprocess execution",
-        "NATS publish or direct strategy.signals publish",
-        "writing enabled strategies"
+  "agent_api": {
+    "auth": "Authorization: Bearer ${ZUOGE_CRYPTO_API_KEY}",
+    "endpoints": [
+      "GET /api/v1/agent/strategy/capabilities",
+      "GET /api/v1/agent/market/subscriptions",
+      "GET /api/v1/agent/strategy/candidates",
+      "GET /api/v1/market/subscriptions",
+      "GET /api/v1/strategy/candidates/runtime",
+      "GET /api/v1/agent/strategy/context",
+      "GET /api/v1/agent/strategy/context/{symbol}",
+      "GET /api/v1/agent/strategy/decision-logs"
     ],
-    "nats_control_plane": {
-        "subscription_release": "market.subscription.release",
-        "subscription_request": "market.subscription.request",
-        "subscription_status": "market.subscription.status.{symbol}",
-        "universe": "strategy.universe.delta"
+    "prefix": "/api/v1/agent"
+  },
+  "catalog_version": "strategy-capabilities",
+  "context": {
+    "candidate_key": [
+      "strategy_id",
+      "symbol",
+      "side"
+    ],
+    "candidate_schema": {
+      "meaning": "strategy-private side-aware candidate; candidates do not execute until full symbol context is warm",
+      "required": [
+        "strategy_id",
+        "symbol",
+        "side",
+        "score",
+        "reason",
+        "required_dependencies",
+        "ttl_seconds"
+      ],
+      "side": [
+        "long",
+        "short"
+      ]
+    },
+    "candidate_statuses": [
+      "selected",
+      "requested",
+      "warming",
+      "ready",
+      "stale",
+      "expired",
+      "released"
+    ],
+    "context_subject": "strategy.context.delta.{symbol}",
+    "dependency_stream_mapping": {
+      "agg_trade": "aggTrade",
+      "force_order": "forceOrder",
+      "kline:\u003cinterval\u003e": "kline_\u003cinterval\u003e",
+      "l1_book": "bookTicker",
+      "l2_book_top": "depth20@100ms",
+      "mark_price": "markPrice@1s",
+      "mini_ticker": "miniTicker",
+      "ticker_24h": "ticker"
+    },
+    "entrypoint": "RealtimeSymbolState",
+    "runtime_interface": {
+      "class": "Strategy",
+      "method": "discover(self, universe: dict) -\u003e list[dict]; build_signals_from_context(self, context: dict) -\u003e list[dict]",
+      "notes": [
+        "discover consumes strategy.universe.delta and may only return candidates",
+        "build_signals_from_context consumes warmed strategy.context.delta.{symbol}",
+        "each returned signal must target exactly one warmed candidate symbol",
+        "return [] when there is no opportunity or context is not warm"
+      ]
+    },
+    "snapshot_fields": [
+      {
+        "meaning": "immutable context snapshot id",
+        "name": "context_id",
+        "type": "string"
+      },
+      {
+        "meaning": "server-side snapshot time",
+        "name": "server_time",
+        "type": "RFC3339 timestamp"
+      },
+      {
+        "meaning": "paper/testnet/live runtime mode",
+        "name": "trading_mode",
+        "type": "string"
+      },
+      {
+        "meaning": "whether live order placement is globally enabled",
+        "name": "live_ordering_enabled",
+        "type": "bool"
+      },
+      {
+        "meaning": "trading pause, emergency stop, and realtime market status",
+        "name": "runtime",
+        "type": "object"
+      },
+      {
+        "meaning": "account equity, balance, exposure, and position slots",
+        "name": "account",
+        "type": "object"
+      },
+      {
+        "meaning": "per-symbol realtime strategy input state",
+        "name": "realtime_state",
+        "type": "RealtimeSymbolState"
+      }
+    ],
+    "symbol_fields": [
+      {
+        "meaning": "exchange contract tradability only",
+        "name": "tradable",
+        "type": "bool"
+      },
+      {
+        "meaning": "whether this context can be used by strategy logic",
+        "name": "context_status",
+        "type": "ready|degraded|unavailable"
+      },
+      {
+        "meaning": "backend reasons for unavailable/degraded context",
+        "name": "not_tradable_reasons",
+        "type": "[]string"
+      },
+      {
+        "meaning": "latest per-symbol market sequence used by features",
+        "name": "market_seq",
+        "type": "int64"
+      },
+      {
+        "meaning": "Feature engine computed realtime features and provenance",
+        "name": "features",
+        "type": "MicrostructureFeatures|TradeFlowFeatures|KlineFeatures|DerivativeFeatures"
+      },
+      {
+        "meaning": "symbol fit against account risk and slots",
+        "name": "account_fit",
+        "type": "StrategyAccountFit"
+      },
+      {
+        "meaning": "active profile rule source and version",
+        "name": "strategy_profile",
+        "type": "StrategyProfile"
+      },
+      {
+        "meaning": "age of realtime market data at feature publication",
+        "name": "data_freshness_ms",
+        "type": "int64"
+      }
+    ],
+    "universe_subject": "strategy.universe.delta",
+    "warmup_schema": {
+      "default_max_data_age_ms": 300,
+      "required_dependencies": [
+        "l1_book",
+        "l2_book_top",
+        "agg_trade",
+        "mark_price",
+        "kline:\u003cinterval\u003e"
+      ],
+      "statuses": [
+        "warming",
+        "ready",
+        "degraded",
+        "expired"
+      ]
     }
+  },
+  "context_schema_version": "strategy-context",
+  "feature_engine": {
+    "algorithm_version": "realtime-feature-engine",
+    "dependency_statuses": [
+      "fresh",
+      "expired",
+      "missing",
+      "invalid",
+      "partial",
+      "unsupported_symbol",
+      "source_error"
+    ],
+    "features": [
+      {
+        "dependency": "klines",
+        "direction": "higher means more volatility",
+        "meaning": "14-period ATR / last close * 100",
+        "path": "features.timeframes[*].atr_pct",
+        "unit": "percent"
+      },
+      {
+        "dependency": "klines",
+        "direction": "positive bullish, negative bearish",
+        "meaning": "window close-to-close return",
+        "path": "features.timeframes[*].trend_return_pct",
+        "unit": "percent"
+      },
+      {
+        "dependency": "klines",
+        "direction": "0 near low, 1 near high",
+        "meaning": "last close location within recent high-low range",
+        "path": "features.timeframes[*].position_in_range",
+        "unit": "0..1"
+      },
+      {
+        "dependency": "klines",
+        "direction": "higher means volume expansion",
+        "meaning": "latest volume / previous 20-candle average volume",
+        "path": "features.timeframes[*].volume_expansion",
+        "unit": "ratio"
+      },
+      {
+        "dependency": "klines",
+        "direction": "true means prior range breakout",
+        "meaning": "latest close broke previous 20-candle high or low",
+        "path": "features.timeframes[*].breakout",
+        "unit": "bool"
+      },
+      {
+        "dependency": "klines",
+        "direction": "higher means cleaner entry setup",
+        "meaning": "deterministic trend, volatility, volume and breakout score",
+        "path": "features.timeframes[*].entry_score",
+        "unit": "0..100"
+      },
+      {
+        "dependency": "order_book",
+        "direction": "lower is better",
+        "meaning": "best bid/ask spread percentage",
+        "path": "features.microstructure.spread_pct",
+        "unit": "percent"
+      },
+      {
+        "dependency": "order_book",
+        "direction": "positive bid support, negative ask pressure",
+        "meaning": "top-book depth imbalance",
+        "path": "features.microstructure.book_imbalance",
+        "unit": "ratio"
+      },
+      {
+        "dependency": "funding",
+        "direction": "positive long crowded, negative short crowded",
+        "meaning": "latest funding rate",
+        "path": "features.derivatives.funding_rate",
+        "unit": "rate"
+      },
+      {
+        "dependency": "open_interest_change",
+        "direction": "higher means rising open interest",
+        "meaning": "recent open-interest change",
+        "path": "features.derivatives.oi_change_5m",
+        "unit": "percent"
+      },
+      {
+        "dependency": "ticker_stats",
+        "direction": "positive bullish, negative bearish",
+        "meaning": "24h price change",
+        "path": "features.ticker.price_change_pct",
+        "unit": "percent"
+      },
+      {
+        "dependency": "ticker_stats",
+        "direction": "higher means more activity",
+        "meaning": "24h base volume",
+        "path": "features.ticker.volume",
+        "unit": "base asset"
+      },
+      {
+        "dependency": "ticker_stats",
+        "direction": "higher means more liquidity",
+        "meaning": "24h quote volume",
+        "path": "features.ticker.quote_volume",
+        "unit": "quote asset"
+      },
+      {
+        "dependency": "feature engine synthesis",
+        "direction": "higher means better setup",
+        "meaning": "overall setup quality",
+        "path": "features.composite.setup_score",
+        "unit": "0..100"
+      },
+      {
+        "dependency": "order_book,ticker_stats",
+        "direction": "higher is better",
+        "meaning": "liquidity/activity quality",
+        "path": "features.composite.liquidity_quality",
+        "unit": "0..100"
+      },
+      {
+        "dependency": "funding,open_interest_change,long_short_ratio",
+        "direction": "higher means more crowded",
+        "meaning": "derivatives crowding score",
+        "path": "features.composite.crowding_score",
+        "unit": "0..100"
+      }
+    ],
+    "optional_dependencies": [
+      "mark_price"
+    ],
+    "quality_statuses": [
+      "ready",
+      "degraded",
+      "unavailable"
+    ],
+    "required_dependencies": [
+      "l1_book",
+      "l2_book_top",
+      "agg_trade",
+      "kline"
+    ]
+  },
+  "feature_engine_algorithm_version": "realtime-feature-engine",
+  "forbidden_capabilities": [
+    "network access",
+    "filesystem reads/writes except candidate source owned by the tool",
+    "database access",
+    "exchange access",
+    "subprocess execution",
+    "NATS publish or direct strategy.signals publish",
+    "approve review",
+    "deploy enabled/live",
+    "direct risk/execution operations",
+    "writing enabled strategies"
+  ],
+  "generated_at": "2026-05-12T11:03:59.490701Z",
+  "nats_control_plane": {
+    "subscription_release": "market.subscription.release",
+    "subscription_request": "market.subscription.request",
+    "subscription_status": "market.subscription.status.{symbol}",
+    "universe": "strategy.universe.delta"
+  },
+  "risk_constraints": [
+    "Signal source and skill must pass Go signal validation allowlists",
+    "Risk service enforces exposure, staleness, reward/risk, position guard, and execution constraints",
+    "Strategies must not assume generated signals will execute",
+    "deploy-live is disabled from strategy workflow"
+  ],
+  "signal": {
+    "data_dependencies": "include realtime market_seq, quote_side, data freshness, max age, and slippage budget",
+    "event_schema": "StrategySignalEvent",
+    "intents": [
+      "OPEN_LONG",
+      "OPEN_SHORT",
+      "CLOSE_LONG",
+      "CLOSE_SHORT",
+      "REVERSE_LONG",
+      "REVERSE_SHORT"
+    ],
+    "required_fields": [
+      "schema_version",
+      "signal_id",
+      "source",
+      "strategy_id",
+      "strategy_version",
+      "context_id",
+      "symbol",
+      "intent",
+      "price_ref",
+      "quote_side",
+      "market_seq",
+      "data_freshness_ms",
+      "max_data_age_ms",
+      "max_slippage_bps",
+      "signal_time",
+      "expire_ms",
+      "trade_params",
+      "trace_id"
+    ],
+    "trade_params_schema": {
+      "properties": {
+        "entry": {
+          "price.order_type": [
+            "market",
+            "limit"
+          ],
+          "timing.expire_after_seconds": "positive integer",
+          "trigger.type": [
+            "immediate",
+            "price_above",
+            "price_below",
+            "range"
+          ]
+        },
+        "execution_constraints": {
+          "max_slippage_pct": "decimal string",
+          "min_reward_risk": "decimal string",
+          "quote_staleness_seconds": "integer"
+        },
+        "exits": {
+          "stop_loss.mode": [
+            "none",
+            "price",
+            "percent"
+          ],
+          "take_profit.mode": [
+            "none",
+            "single",
+            "ladder"
+          ],
+          "time_stop.enabled": "bool",
+          "trailing_stop.enabled": "bool"
+        },
+        "margin": {
+          "leverage": "decimal string",
+          "mode": [
+            "cross",
+            "isolated"
+          ]
+        },
+        "position_management": {
+          "allow_add_position": "bool",
+          "allow_partial_exit": "bool",
+          "allow_reverse_on_opposite_signal": "bool",
+          "max_add_count": "integer",
+          "same_symbol_cooldown_minutes": "integer"
+        },
+        "sizing": {
+          "amounts": [
+            "target_notional",
+            "target_risk_amount",
+            "target_quantity",
+            "min_notional",
+            "max_notional",
+            "min_quantity",
+            "max_quantity"
+          ],
+          "mode": [
+            "target_notional",
+            "risk_budget",
+            "fixed_quantity"
+          ]
+        }
+      },
+      "required": [
+        "entry",
+        "exits",
+        "sizing",
+        "position_management",
+        "execution_constraints"
+      ],
+      "type": "object"
+    }
+  },
+  "signal_schema_version": "1.0",
+  "strategy_profiles": {
+    "rule_precedence": [
+      "symbol exact",
+      "theme",
+      "default",
+      "builtin default"
+    ],
+    "strategy_types": [
+      "trend_following",
+      "momentum_breakout",
+      "range_mean_reversion",
+      "ecosystem_momentum"
+    ],
+    "themes": [
+      "meme",
+      "gold",
+      "l1",
+      "defi",
+      "other",
+      "default"
+    ]
+  },
+  "strategy_sdk_version": "strategy-sdk",
+  "tool_commands": {
+    "candidate_backtest": "crypto-skill candidate backtest",
+    "candidate_check": "crypto-skill candidate check",
+    "candidate_create": "crypto-skill candidate new",
+    "candidate_list": "crypto-skill candidate list",
+    "candidate_report": "crypto-skill candidate report",
+    "candidate_show": "crypto-skill candidate show",
+    "candidate_submit_review": "crypto-skill candidate submit-review",
+    "candidate_test": "crypto-skill candidate test",
+    "research_create": "crypto-skill research create",
+    "research_show": "crypto-skill research show",
+    "strategy_directory_deploy": "crypto-skill strategy deploy-current"
+  }
 }

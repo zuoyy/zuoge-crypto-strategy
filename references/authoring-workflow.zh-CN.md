@@ -29,4 +29,8 @@
 10. 运行 check/test/backtest/report。
 11. 全部通过后 submit-review，停止等待人工审批。
 
+`candidate new` 表示首次创建候选策略登记记录并返回 `candidate_id`。检查、测试、回测、报告都面向已有 `candidate_id` 执行；如果用户只是要求检查或回测已有策略，先查 `crypto-skill candidate list`，不要重复创建同一个 `strategy_id` + `version`。
+
+发布当前策略目录是独立操作。只有用户明确要求发布当前 `strategy/` 目录时，才执行 `crypto-skill strategy deploy-current`；不要在候选编写、校验、回测或提交评审流程中顺手发布。
+
 策略不得自行推导 UI 结论；no-trade、degraded、rejected 原因必须来自 runtime decision logs 或后端报告。
