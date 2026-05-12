@@ -1,5 +1,5 @@
 name: zuoge-crypto-strategy
-version: 2.0.0
+version: 1.0.0
 description: >
   Agent API-first skill for realtime context delta strategy candidate authoring,
   validation, backtesting, reporting, and submit-review.
