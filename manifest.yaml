@@ -1,7 +1,7 @@
 name: zuoge-crypto-strategy
 version: 1.0.0
 description: >
-  编写、校验、回测、提交实时策略候选，并在明确要求时发布当前策略目录。
+  编写、校验、回测并自动投递实时策略候选到生产收件箱；生产审批和启用由人工完成。
 project_root_env: ZUOGE_CRYPTO_PROJECT_ROOT
 project_root_detection:
   required_files:
@@ -49,11 +49,13 @@ allowed_commands:
   - crypto-skill candidate test
   - crypto-skill candidate backtest
   - crypto-skill candidate report
-  - crypto-skill candidate submit-review
+  - crypto-skill candidate export
+  - crypto-skill candidate publish
   - crypto-skill strategy deploy-current
 
 forbidden_commands:
   - crypto-skill candidate promote-enabled
+  - crypto-skill candidate submit-review
   - psql
   - curl non-agent routes
   - any exchange order command

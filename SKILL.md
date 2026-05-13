@@ -1,6 +1,6 @@
 ---
 name: zuoge-crypto-strategy
-description: "用于编写、校验、回测、提交实时策略候选，并在明确要求时发布当前策略目录到生产实时策略服务。"
+description: "用于编写、校验、回测并自动投递实时策略候选到生产收件箱；生产审批和启用由人工完成。"
 ---
 
 # zuoge-crypto-strategy
@@ -15,7 +15,7 @@ description: "用于编写、校验、回测、提交实时策略候选，并在
 ## 开始前必须先做
 
 1. 确认项目根目录。优先使用当前工作区；否则读取 `ZUOGE_CRYPTO_PROJECT_ROOT`；目录内必须存在 `cmd/crypto-skill/main.go` 和 `strategy/runtime/strategy_sdk.py`。
-2. 切换到项目根目录工作。候选策略登记、检查、测试、回测、报告和提交评审都通过 `crypto-skill` 直接操作本地源码目录和本地开发数据库。
+2. 切换到项目根目录工作。候选策略登记、检查、测试、回测、报告和候选包投递都通过 `crypto-skill` 操作；本地阶段使用本地源码目录和本地开发数据库。
 3. 本地候选操作不要求 API 服务启动；如果当前 shell 没有 `DATABASE_URL`，`crypto-skill` 会读取项目根目录 `.env.dev`。默认只允许连接库名以 `_dev` 结尾的开发库。
 4. 只有查询实时能力目录、实时 context、订阅状态、决策日志这类运行态信息时，才调用 Agent API。
 
@@ -40,9 +40,25 @@ description: "用于编写、校验、回测、提交实时策略候选，并在
 7. `crypto-skill candidate test --candidate <candidate_id>`
 8. `crypto-skill candidate backtest --candidate <candidate_id>`
 9. `crypto-skill candidate report --candidate <candidate_id>`
-10. 只有 check/test/backtest 都通过时，`crypto-skill candidate submit-review --candidate <candidate_id>`，然后停止等待人工审批。
+10. 只有 check/test/backtest 都通过时，`crypto-skill candidate publish --candidate <candidate_id>`，把候选包投递到生产 Strategy Center 收件箱，然后停止等待人工审批。
 
 `candidate new` 只用于首次把候选策略文件登记到策略中心并取得 `candidate_id`。如果用户要求检查、测试或回测一个已经登记过的策略，先用 `crypto-skill candidate list` 或 `crypto-skill candidate show --candidate <candidate_id>` 找到已有 `candidate_id`，然后直接运行 `check`、`test`、`backtest`、`report`；不要为同一个 `strategy_id` 和 `version` 重复执行 `candidate new`。
+
+## 自动投递候选包到生产
+
+默认完成校验和报告后执行：
+
+```bash
+crypto-skill candidate publish --candidate <candidate_id>
+```
+
+该命令读取 `ZUOGE_CRYPTO_BASE_URL` 和 `ZUOGE_CRYPTO_PUBLISH_TOKEN`。投递只把候选包送到生产收件箱，不会审批、不会启用、不会写 enabled、不会触发下单。投递成功后停止，由人在生产 Strategy Center 提交/审批 review。
+
+若用户只要求离线交付候选包，可执行：
+
+```bash
+crypto-skill candidate export --candidate <candidate_id> --output tmp/ai-skill/<name>.json
+```
 
 ## 发布当前策略目录
 
@@ -53,6 +69,7 @@ description: "用于编写、校验、回测、提交实时策略候选，并在
 - 只发布项目根目录下当前 `strategy/` 目录。
 - 使用仓库内既有生产脚本，不手写替代发布流程。
 - 不审批候选策略，不启用候选策略，不绕过策略中心。
+- 不携带或覆盖生产持久 enabled 策略状态。
 - 不调用风控、执行、交易所或下单接口。
 - 不需要读取策略能力目录，也不需要调用 Agent API。
 
@@ -68,7 +85,7 @@ description: "用于编写、校验、回测、提交实时策略候选，并在
 crypto-skill strategy deploy-current
 ```
 
-该命令会通过仓库内既有生产脚本创建新的生产发布目录、同步当前 `strategy/` 目录、检查 Python 策略依赖，并刷新 `com.crypto-trader.realtime-strategy` 服务。发布完成后，向用户报告发布编号、当前发布链接和命令输出里的日志路径。
+该命令会通过仓库内既有生产脚本创建新的生产发布目录、同步当前 `strategy/` 运行时代码、检查 Python 策略依赖，并刷新 `com.crypto-trader.realtime-strategy` 服务。生产 enabled 策略从持久目录加载，不随 release 目录切换。发布完成后，向用户报告发布编号、当前发布链接和命令输出里的日志路径。
 
 ## 策略标准
 
@@ -108,6 +125,7 @@ class Strategy:
 
 - 不写 `strategy/strategies/enabled/`。
 - 不审批候选、不启用候选、不禁用策略、不执行实盘部署开关。
+- 不调用生产 approve、deploy、disable 路由；允许的生产写入仅限 `crypto-skill candidate publish` 投递候选包。
 - 除“发布当前策略目录”一节允许的生产脚本外，不执行其他发布命令。
 - 不发布 `strategy.signals`，不调用 NATS publish。
 - 策略代码内不访问网络、数据库、交易所、文件系统、subprocess。

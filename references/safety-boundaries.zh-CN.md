@@ -15,13 +15,14 @@ AI 策略是只读决策层。`discover()` 只能消费实时 `strategy.universe
 - 写 enabled 策略目录
 - 审批候选、启用候选、禁用策略、执行实盘部署开关
 - 使用网页控制台 cookie
-- 调用非 `/api/v1/agent/...` 路由
+- 调用非 `/api/v1/agent/...` 路由；唯一例外是 `crypto-skill candidate publish` 内部调用生产候选包导入接口
 - 在 API key 无效时伪造 capabilities、delta、backtest 或 report
 
 发布边界：
 
-- `submit-review` 只是提交人工审批。
+- `candidate publish` 只是把候选包投递到生产收件箱。
+- `submit-review`、approve、deploy、disable 都属于人工生产后台动作，不是 AI 默认流程。
 - 用户明确要求“发布当前策略目录”时，只允许执行 `crypto-skill strategy deploy-current`。
-- 发布当前策略目录只同步当前 `strategy/` 目录并刷新 `com.crypto-trader.realtime-strategy` 服务，不代表审批、启用或实盘开关变更。
+- 发布当前策略目录只同步当前 `strategy/` 运行时代码并刷新 `com.crypto-trader.realtime-strategy` 服务，不代表审批、启用或实盘开关变更；生产 enabled 策略保存在持久目录。
 - enabled、风控、执行仍由 Strategy Center / Go Trading Core 控制。
 - 策略信号必须经过 Go signal validation、strategyingress、risk、execution 主链路。
