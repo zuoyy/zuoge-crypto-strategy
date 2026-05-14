@@ -372,9 +372,9 @@
           "timing.expire_after_seconds": "positive integer",
           "trigger.type": [
             "immediate",
-            "price_above",
-            "price_below",
-            "range"
+            "touch_price",
+            "breakout",
+            "pullback_into_range"
           ]
         },
         "execution_constraints": {
@@ -390,7 +390,7 @@
           ],
           "take_profit.mode": [
             "none",
-            "single",
+            "fixed_price",
             "ladder"
           ],
           "time_stop.enabled": "bool",
@@ -399,8 +399,7 @@
         "margin": {
           "leverage": "decimal string",
           "mode": [
-            "cross",
-            "isolated"
+            "cross"
           ]
         },
         "position_management": {

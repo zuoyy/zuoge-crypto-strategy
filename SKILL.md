@@ -121,6 +121,8 @@ class Strategy:
 - 必须使用 `strategy/runtime/strategy_sdk.py`，不要手写复杂 signal envelope。
 - 必须记录 `decision_logs`，无交易也要明确 `NO_TRADE`、`WAIT_WARMUP`、`DEGRADED_SKIP` 或 `VALIDATION_FAILED` 原因。
 
+当任务涉及组装、解释或校验 `StrategySignalEvent` / `trade_params` 时，先读取 [references/trade-plan-signal-parameter-design.md](references/trade-plan-signal-parameter-design.md)。该文档说明新架构下信号数据从 `discover(universe)`、候选池、依赖预热、`strategy.context.delta.{symbol}` 到 `build_signals_from_context(context)` 和 `strategy.signals` 的传递顺序，以及 entry/exits/sizing/margin/position management/execution constraints 的填写规则。机器可读 schema 存放在 [generated/trade-plan-signal.schema.json](generated/trade-plan-signal.schema.json)。
+
 ## 禁止
 
 - 不写 `strategy/strategies/enabled/`。
@@ -143,6 +145,8 @@ class Strategy:
 - 详细流程：[references/authoring-workflow.zh-CN.md](references/authoring-workflow.zh-CN.md)
 - 安全边界：[references/safety-boundaries.zh-CN.md](references/safety-boundaries.zh-CN.md)
 - Agent API：[references/agent-api.zh-CN.md](references/agent-api.zh-CN.md)
+- StrategySignalEvent 与 trade_params 参数传递规则：[references/trade-plan-signal-parameter-design.md](references/trade-plan-signal-parameter-design.md)
 - 模板：[templates/dynamic_strategy.py](templates/dynamic_strategy.py)
 - 单测模板：[templates/unit_test.py](templates/unit_test.py)
 - 本地缓存 schema：[generated/capabilities.json](generated/capabilities.json)
+- trade_params schema：[generated/trade-plan-signal.schema.json](generated/trade-plan-signal.schema.json)

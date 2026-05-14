@@ -1,0 +1,828 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zuoge.local/schemas/strategy-signal-event.schema.json",
+  "title": "StrategySignalEvent",
+  "description": "Machine-readable contract for realtime strategy signals returned by build_signals_from_context(context).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "signal_id",
+    "source",
+    "strategy_id",
+    "strategy_version",
+    "context_id",
+    "symbol",
+    "intent",
+    "price_ref",
+    "quote_side",
+    "market_seq",
+    "data_freshness_ms",
+    "max_data_age_ms",
+    "max_slippage_bps",
+    "signal_time",
+    "expire_ms",
+    "reason",
+    "trade_params",
+    "trace_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "signal_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1
+    },
+    "strategy_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "strategy_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "context_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "symbol": {
+      "type": "string",
+      "minLength": 1
+    },
+    "intent": {
+      "type": "string",
+      "enum": [
+        "OPEN_LONG",
+        "OPEN_SHORT",
+        "CLOSE_LONG",
+        "CLOSE_SHORT",
+        "REVERSE_LONG",
+        "REVERSE_SHORT"
+      ]
+    },
+    "price_ref": {
+      "$ref": "#/$defs/positiveDecimal"
+    },
+    "quote_side": {
+      "type": "string",
+      "enum": [
+        "bid",
+        "ask",
+        "mid",
+        "mark"
+      ]
+    },
+    "market_seq": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "data_freshness_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "max_data_age_ms": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "max_slippage_bps": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "signal_time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expire_ms": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "confidence": {
+      "$ref": "#/$defs/confidenceDecimal"
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "trade_params": {
+      "$ref": "#/$defs/tradeParams"
+    },
+    "data_dependencies": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "format": "date-time"
+      }
+    },
+    "trace_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "published_at": {
+      "type": "string",
+      "format": "date-time",
+      "readOnly": true
+    },
+    "nats_publish_ack_time": {
+      "type": "string",
+      "format": "date-time",
+      "readOnly": true
+    }
+  },
+  "$defs": {
+    "decimal": {
+      "oneOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "string",
+          "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+        }
+      ]
+    },
+    "positiveDecimal": {
+      "oneOf": [
+        {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        {
+          "type": "string",
+          "pattern": "^(0\\.[0-9]*[1-9][0-9]*|[1-9][0-9]*(\\.[0-9]+)?)$"
+        }
+      ]
+    },
+    "nonNegativeDecimal": {
+      "oneOf": [
+        {
+          "type": "number",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "pattern": "^(0|0\\.[0-9]+|[1-9][0-9]*(\\.[0-9]+)?)$"
+        }
+      ]
+    },
+    "confidenceDecimal": {
+      "oneOf": [
+        {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        {
+          "type": "string",
+          "pattern": "^(0(\\.[0-9]+)?|1(\\.0+)?)$"
+        }
+      ]
+    },
+    "ratioDecimal": {
+      "oneOf": [
+        {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        {
+          "type": "string",
+          "pattern": "^(0\\.[0-9]*[1-9][0-9]*|1(\\.0+)?)$"
+        }
+      ]
+    },
+    "numericRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "min",
+        "max"
+      ],
+      "properties": {
+        "min": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "max": {
+          "$ref": "#/$defs/positiveDecimal"
+        }
+      }
+    },
+    "entryTrigger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "immediate",
+            "touch_price",
+            "breakout",
+            "pullback_into_range"
+          ]
+        },
+        "trigger_price": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "trigger_range": {
+          "$ref": "#/$defs/numericRange"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "enum": [
+                  "touch_price",
+                  "breakout"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "trigger_price"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "pullback_into_range"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "trigger_range"
+            ]
+          }
+        }
+      ]
+    },
+    "entryPrice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "order_type"
+      ],
+      "properties": {
+        "order_type": {
+          "type": "string",
+          "enum": [
+            "market",
+            "limit"
+          ]
+        },
+        "limit_price": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "acceptable_range": {
+          "$ref": "#/$defs/numericRange"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "order_type": {
+                "const": "limit"
+              }
+            },
+            "required": [
+              "order_type"
+            ]
+          },
+          "then": {
+            "required": [
+              "limit_price"
+            ]
+          }
+        }
+      ]
+    },
+    "entryTiming": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expire_after_seconds"
+      ],
+      "properties": {
+        "expire_after_seconds": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "entryParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "trigger",
+        "price",
+        "timing"
+      ],
+      "properties": {
+        "trigger": {
+          "$ref": "#/$defs/entryTrigger"
+        },
+        "price": {
+          "$ref": "#/$defs/entryPrice"
+        },
+        "timing": {
+          "$ref": "#/$defs/entryTiming"
+        }
+      }
+    },
+    "stopLoss": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "price",
+            "percent",
+            "none"
+          ]
+        },
+        "stop_price": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "loss_pct": {
+          "$ref": "#/$defs/positiveDecimal"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "price"
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          },
+          "then": {
+            "required": [
+              "stop_price"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "percent"
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          },
+          "then": {
+            "required": [
+              "loss_pct"
+            ]
+          }
+        }
+      ]
+    },
+    "takeProfitTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "price",
+        "close_ratio"
+      ],
+      "properties": {
+        "price": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "close_ratio": {
+          "$ref": "#/$defs/ratioDecimal"
+        }
+      }
+    },
+    "takeProfit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "fixed_price",
+            "ladder",
+            "none"
+          ]
+        },
+        "targets": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/takeProfitTarget"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "enum": [
+                  "fixed_price",
+                  "ladder"
+                ]
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          },
+          "then": {
+            "required": [
+              "targets"
+            ]
+          }
+        }
+      ]
+    },
+    "trailingStop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "activation_mode": {
+          "type": "string",
+          "enum": [
+            "immediate",
+            "after_profit_pct",
+            "after_tp_hit"
+          ]
+        },
+        "activation_profit_pct": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "trail_mode": {
+          "type": "string",
+          "enum": [
+            "percent",
+            "price_delta"
+          ]
+        },
+        "trail_value": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "step_mode": {
+          "type": "string",
+          "enum": [
+            "continuous",
+            "step"
+          ]
+        },
+        "step_value": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "move_to_break_even": {
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            },
+            "required": [
+              "enabled"
+            ]
+          },
+          "then": {
+            "required": [
+              "activation_mode",
+              "trail_mode",
+              "trail_value"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": true
+              },
+              "activation_mode": {
+                "const": "after_profit_pct"
+              }
+            },
+            "required": [
+              "enabled",
+              "activation_mode"
+            ]
+          },
+          "then": {
+            "required": [
+              "activation_profit_pct"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": true
+              },
+              "step_mode": {
+                "const": "step"
+              }
+            },
+            "required": [
+              "enabled",
+              "step_mode"
+            ]
+          },
+          "then": {
+            "required": [
+              "step_value"
+            ]
+          }
+        }
+      ]
+    },
+    "timeStop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "max_holding_minutes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            },
+            "required": [
+              "enabled"
+            ]
+          },
+          "then": {
+            "required": [
+              "max_holding_minutes"
+            ]
+          }
+        }
+      ]
+    },
+    "exits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stop_loss",
+        "take_profit",
+        "trailing_stop",
+        "time_stop"
+      ],
+      "properties": {
+        "stop_loss": {
+          "$ref": "#/$defs/stopLoss"
+        },
+        "take_profit": {
+          "$ref": "#/$defs/takeProfit"
+        },
+        "trailing_stop": {
+          "$ref": "#/$defs/trailingStop"
+        },
+        "time_stop": {
+          "$ref": "#/$defs/timeStop"
+        }
+      }
+    },
+    "sizing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "target_notional",
+            "risk_budget",
+            "fixed_quantity"
+          ]
+        },
+        "target_notional": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "target_risk_amount": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "target_quantity": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "min_notional": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "max_notional": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "min_quantity": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "max_quantity": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "allow_downsize": {
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "target_notional"
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          },
+          "then": {
+            "required": [
+              "target_notional"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "risk_budget"
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          },
+          "then": {
+            "required": [
+              "target_risk_amount"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "fixed_quantity"
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          },
+          "then": {
+            "required": [
+              "target_quantity"
+            ]
+          }
+        }
+      ]
+    },
+    "margin": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "cross"
+          ]
+        },
+        "leverage": {
+          "$ref": "#/$defs/positiveDecimal"
+        }
+      }
+    },
+    "positionManagement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allow_add_position",
+        "max_add_count",
+        "allow_partial_exit",
+        "allow_reverse_on_opposite_signal",
+        "same_symbol_cooldown_minutes"
+      ],
+      "properties": {
+        "allow_add_position": {
+          "type": "boolean"
+        },
+        "max_add_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "allow_partial_exit": {
+          "type": "boolean"
+        },
+        "allow_reverse_on_opposite_signal": {
+          "type": "boolean"
+        },
+        "same_symbol_cooldown_minutes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "executionConstraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_slippage_pct": {
+          "$ref": "#/$defs/nonNegativeDecimal"
+        },
+        "min_reward_risk": {
+          "$ref": "#/$defs/nonNegativeDecimal"
+        },
+        "quote_staleness_seconds": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "tradeParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entry",
+        "exits",
+        "sizing",
+        "position_management",
+        "execution_constraints"
+      ],
+      "properties": {
+        "entry": {
+          "$ref": "#/$defs/entryParams"
+        },
+        "exits": {
+          "$ref": "#/$defs/exits"
+        },
+        "sizing": {
+          "$ref": "#/$defs/sizing"
+        },
+        "margin": {
+          "$ref": "#/$defs/margin"
+        },
+        "position_management": {
+          "$ref": "#/$defs/positionManagement"
+        },
+        "execution_constraints": {
+          "$ref": "#/$defs/executionConstraints"
+        }
+      }
+    }
+  }
+}
