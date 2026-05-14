@@ -52,6 +52,9 @@ allowed_commands:
   - crypto-skill candidate export
   - crypto-skill candidate publish
   - crypto-skill strategy deploy-current
+  - crypto-skill strategy telegram status
+  - crypto-skill strategy telegram enable
+  - crypto-skill strategy telegram disable
 
 forbidden_commands:
   - crypto-skill candidate promote-enabled

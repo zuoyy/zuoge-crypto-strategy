@@ -87,6 +87,20 @@ crypto-skill strategy deploy-current
 
 该命令会通过仓库内既有生产脚本创建新的生产发布目录、同步当前 `strategy/` 运行时代码、检查 Python 策略依赖，并刷新 `com.crypto-trader.realtime-strategy` 服务。生产 enabled 策略从持久目录加载，不随 release 目录切换。发布完成后，向用户报告发布编号、当前发布链接和命令输出里的日志路径。
 
+## Telegram 策略简报开关
+
+当用户要求开启、关闭或查看 Telegram 策略运行简报时，只通过 `crypto-skill strategy telegram ...` 控制，不手工编辑环境文件。
+
+```bash
+crypto-skill strategy telegram status
+crypto-skill strategy telegram enable
+crypto-skill strategy telegram disable
+```
+
+该命令通过 Agent API 更新数据库里的系统设置 `telegram_strategy_report_enabled`，运行中的 realtime-strategy 会轮询系统设置并实时生效，不需要重启。
+
+即使开关已开启，如果当前没有加载到运行中的 enabled 策略，系统也不会推送空的 Telegram 简报。
+
 ## 策略标准
 
 新策略必须实现：
