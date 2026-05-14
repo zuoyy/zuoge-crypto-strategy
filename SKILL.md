@@ -157,7 +157,7 @@ class Strategy:
 - `allow_reverse_on_opposite_signal` 只是未来偏好，不代表本次反手授权；保守策略默认 `false`，真正反手由 signal 顶层 `intent=REVERSE_*` 表达。
 - `expire_ms` 默认值改为 **60000（60s）**；原 15000（15s）在 NATS 投递 + ingress 消费 + 行情校验链路中经常不够，导致 `market_seq_too_old` 和 `signal_expired`。SDK `signal_envelope()` 已更新默认值。
 - **杠杆**：不再硬编码。`basic_trade_params()` 调用 `pick_leverage(context, *, volatility_pct, score, stage)` 在 `context.risk_limits` 的 `[min_leverage, max_leverage]` 范围内按币种动态选杠杆。保守阶段（sweep/reversal/neutral）用最小杠杆；高分+低波动→加杠杆；高波动→降杠杆。策略可通过 `leverage_score`/`leverage_stage`/`leverage_vol_pct` 参数传递信号上下文。后端必须在 `strategyRiskLimits` 暴露 `min_leverage`/`max_leverage` 字段（从 `risk.Limits` 读取），否则 `pick_leverage()` fallback 5x–20x。**杠杆必须为整数**（Binance 要求），`pick_leverage()` 返回 `int`，`margin.leverage` 强制 `str(int(...))`。
-- **盈亏比与量化**：超低价币 tick_size 粗于价格波动时，`quantize_price()` 可能同时破坏止损和止盈方向/比例。SDK `_quantized_or_fallback()` 新增 `min_above`/`max_below`/`min_value` 三个边界保护，`basic_trade_params()` 使用 `actual_risk`（量化后真实止损距离）而非公式距离计算 TP。详见 [references/price-quantization-pitfalls.md](references/price-quantization-pitfalls.md)。\n  - **⚠️ TP 阶梯崩溃**：`tp1_ratio = max(reward_risk, 1.5)` 在 `reward_risk ≥ 1.5` 时等于 `reward_risk`，导致 TP1 == TP2。修复：`tp1_ratio = 1.5` 固定近端；`min_reward_risk = \"1.5\"` 匹配 Go 校验。这**不是量化问题**，是纯逻辑 bug，详见 [references/price-quantization-pitfalls.md](references/price-quantization-pitfalls.md) 模式 4。
+- **盈亏比与量化**：超低价币 tick_size 粗于价格波动时，`quantize_price()` 可能同时破坏止损和止盈方向/比例。SDK `_quantized_or_fallback()` 新增 `min_above`/`max_below`/`min_value` 三个边界保护，`basic_trade_params()` 使用 `actual_risk`（量化后真实止损距离）而非公式距离计算 TP。详见 [references/price-quantization-pitfalls.md](references/price-quantization-pitfalls.md)。\n- **⚠️ TP 阶梯崩溃**：`tp1_ratio = max(reward_risk, 1.5)` 在 `reward_risk ≥ 1.5` 时等于 `reward_risk`，导致 TP1 == TP2。修复：`tp1_ratio = 1.5` 固定近端；`min_reward_risk = \"1.5\"` 匹配 Go 校验。这**不是量化问题**，是纯逻辑 bug，详见 [references/price-quantization-pitfalls.md](references/price-quantization-pitfalls.md) 模式 4。
 - **持仓感知**：策略不应盲开仓。SDK 提供 `position_snapshot(context)` 提取持仓完整信息（side/qty/entry_price/unrealized_pnl/notional）。策略必须在 `build_signals_from_context()` 中读取持仓，在 `_trade_gate` 中做：同向持仓→允许加仓但检查敞口和浮亏；反向持仓→仅强 setup+高分允许反手。详见 [references/position-aware-trading-plan.md](references/position-aware-trading-plan.md)。
 - **`max_notional` 瓶颈（risk_budget 模式）**：`basic_trade_params()` 按现金口径（`equity * pct / 100`）算 `max_notional`（如 $50），但 Go 后端 `computeSizing()` 在 risk_budget 模式下算出 `notional = target_risk_amount / stop_pct`（如 $4,180）后，会用 `max_notional` 做硬上限（line 404）。结果 $4,180 被压回 $50，下单量极小。修复：切到 risk_budget 后，**必须重新计算 `max_notional`**，至少设为 `risk_amount / stop_pct * 1.3`，上限 `equity * leverage * max_symbol_exposure_pct / 100`。详见 [references/risk-budget-sizing-pitfall.md](references/risk-budget-sizing-pitfall.md)。
 
@@ -362,8 +362,10 @@ nats pub settings.changed '{"version":1}'
 - 安全边界：[references/safety-boundaries.zh-CN.md](references/safety-boundaries.zh-CN.md)
 - Agent API：[references/agent-api.zh-CN.md](references/agent-api.zh-CN.md)
 - StrategySignalEvent 与 trade_params 参数传递规则：[references/trade-plan-signal-parameter-design.md](references/trade-plan-signal-parameter-design.md)
+- 持仓感知交易计划：[references/position-aware-trading-plan.md](references/position-aware-trading-plan.md)
 - 信号推送被拒诊断：[references/signal-rejection-diagnosis.md](references/signal-rejection-diagnosis.md)
-- 价格量化陷阱（超低价币止损/止盈归零与方向错位）：[references/price-quantization-pitfalls.md](references/price-quantization-pitfalls.md)
+- 价格量化陷阱：[references/price-quantization-pitfalls.md](references/price-quantization-pitfalls.md)
+- risk_budget 模式 sizing 瓶颈：[references/risk-budget-sizing-pitfall.md](references/risk-budget-sizing-pitfall.md)
 - 模板：[templates/dynamic_strategy.py](templates/dynamic_strategy.py)
 - 单测模板：[templates/unit_test.py](templates/unit_test.py)
 - 本地缓存 schema：[generated/capabilities.json](generated/capabilities.json)

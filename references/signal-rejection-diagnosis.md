@@ -234,9 +234,16 @@ func (p Proposal) EffectiveLeverage(defaultLeverage decimal.Decimal) decimal.Dec
 leverage = str(max(number(risk_limits.get("min_leverage"), 0.0), 5.0))
 ```
 
-### 当前限制
+### 修复（已实施）
 
-`context.risk_limits` 目前只暴露 `max_order_notional_pct`、`max_symbol_exposure_pct`、`max_slippage_bps`，**未暴露 `min_leverage`/`max_leverage`**。如需策略动态感知，需在后端 `strategy_context.go` 的 `strategyRiskLimits` 结构体中增加字段。
+SDK `basic_trade_params()` 调用 `pick_leverage(context, *, volatility_pct, score, stage)` 在 `[min_leverage, max_leverage]` 范围内按币种动态选杠杆（保守阶段用 min，高分加杠杆，高波动降杠杆）。杠杆必须为整数（Binance 要求）。
+
+后端 `strategy_context.go` 的 `strategyRiskLimits` 已新增 `min_leverage`/`max_leverage` 字段，从 `risk.Limits` 读取。验证：
+```
+risk_limits: {"min_leverage": "5", "max_leverage": "20", ...}
+```
+
+详见 [references/position-aware-trading-plan.md](references/position-aware-trading-plan.md)。
 
 ## 风控层拒绝：`min_reward_risk` — 盈亏比低于执行门槛
 
