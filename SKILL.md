@@ -242,11 +242,11 @@ def build_signals_from_context(self, context: dict) -> list[dict]:
 1. **无持仓** → 正常开仓，走原来的市场结构门控。
 
 2. **同向持仓**（position.side == signal.side）：
-   - 允许加仓，但必须检查：
-     - `symbol_exposure_pct < max_symbol_exposure_pct * 0.75`，否则拒绝 `same_side_already_near_max_exposure`
-     - 浮亏不超过 notional 的 3%，否则拒绝 `do_not_add_to_losing_position`
+   - **默认不允许加仓**。加仓只在满足全部条件时开启：score ≥ 80、PnL ≥ 0（不在亏损中）、stage 不为 neutral_probe。
+   - 加仓时检查：`symbol_exposure_pct < max_symbol_exposure_pct * 0.75`，否则拒绝 `same_side_already_near_max_exposure`
+   - 浮亏不超过 notional 的 3%，否则拒绝 `do_not_add_to_losing_position`
    - `_risk_budget_pct()` 将 budget 减半（`* 0.5`），`_account_gate()` 地板从 0.25 降到 0.15
-   - `position_management.allow_add_position = true`，`max_add_count = 1`，`cooldown` 缩短到 15min
+   - `position_management.allow_add_position = true`，`max_add_count = 1`，`cooldown` = **120 分钟**（2026-05-15 从 15 分钟提升，防止"刚开仓就加仓"和频繁累加）
 
 3. **反向持仓**（position.side != signal.side）：
    - 只允许强 setup 反手：stage ∈ {accepted_breakout, sweep_reclaim, low_reversal_long, high_reversal_short}
@@ -411,11 +411,61 @@ nats pub settings.changed '{"version":1}'
 
 或直接 kill & 自动重启 worker 进程（KeepAlive 模式下 launchd 自动拉起）。
 
+### 6d. ⚠️ `account_risk_budget_missing` — overlay 失败导致全场 NO_TRADE
+
+当 strategy context overlay 调用 Go 后端 `/api/v1/agent/strategy/context/{symbol}` 失败时（日志出现 `strategy_context_overlay_failed`），`context.account_fit` 为空，策略的 `_account_gate()` 读到 `remaining_symbol_budget_pct=0` → 返回 False → **所有信号全部 NO_TRADE**，策略完全停摆。
+
+**最快确认方式**（绕过 API 直接查生产 DB）：
+
+```sql
+-- 看最近 decision logs 是否有大量 account_risk_budget_missing
+SELECT decision, reason, symbol,
+       to_char(created_at AT TIME ZONE 'Asia/Shanghai', 'MM-DD HH24:MI') as cst
+FROM strategy_decision_logs
+ORDER BY created_at DESC LIMIT 20;
+```
+
+**修复方向**：
+1. 确认 Go 后端 `/api/v1/agent/strategy/context/{symbol}` 路由正常响应（`curl` 验证）
+2. 检查 overlay `base_url` 配置（`STRATEGY_CONTEXT_API_URL` / `ZUOGE_CRYPTO_BASE_URL`）
+3. 策略侧防御：overlay 失败时降级使用 context 已有字段（如 `account_fit` 缓存），而不是直接拒绝所有信号
+
+### 6e. ⚠️ 同向加仓冷却过短 → 频繁加仓撞后端限制
+
+策略 `_apply_position_management` 中同向加仓 `cooldown = 15` 分钟过短。`max_add_count=1` 只限制单信号内加仓次数，不跨信号生效。15 分钟后新 candidate 即可再次签发加仓信号，导致短时间频繁加仓、触发后端仓位/NATR 限制。
+
+**实盘案例**：DUSKUSDT 09:19 全平后，09:30（间隔 11 分钟）即签发加仓信号 `d140313d708d`，买入 3037 DUSKUSDT。同一 symbol 在 48 分钟内出现 7 个候选信号（RIVERUSDT）。
+
+**修复方向**：
+- 同向加仓 cooldown 提到 **60 分钟**，或加仓后 **120 分钟**内禁止同 symbol 新开
+- `discover()` 加 per-symbol 冷却：同一 symbol 发过 candidate 后 30 分钟内不重复发
+
 ### 7. 排查时易犯错误
 
 - **查错数据库**：worker 用 `crypto_trader`（production），不是 `crypto_trader_dev`。检查 worker 的 `DATABASE_URL` env var 确认。
 - **只查 signals 表**：信号可能全进了 `strategy_signal_rejects` 而 `signals` 表为空。两表都要查。
-- **忽略 NATS subject 分布**：`nats stream subjects` 能直接看出 signal 和 dead letter 的比例，是判断“全被拒”还是“根本没到”的最快方式。
+- **忽略 NATS subject 分布**：`nats stream subjects` 能直接看出 signal 和 dead letter 的比例，是判断"全被拒"还是"根本没到"的最快方式。
+- **signals 表全 expired 不一定是没执行**：fills 表可能有实际成交（通过 NATS→ingress→execution 路径），需要联查 `fills` + `position_plan_runtimes` 才能还原真实交易时间线。不要只看 signals.status=expired 就断定无交易。
+- **账户满仓死锁**：当 `remaining_total_budget=0` 且无 candidate 时，策略不发 CLOSE 信号（架构限制），导致持仓永远无法通过策略自动平仓。确诊：查 `strategy_decision_logs` 是否全部 `account_risk_budget_missing`；查 portfolio snapshot 中 `remaining_total_budget_pct` 和 `total_exposure_pct`。解药：手动平仓释放预算。（长期：加持仓监控订阅，即使无 candidate 也定期检查持仓退出条件。）
+
+### 6f. ⚠️ SlowConsumer 淹没事件循环 — wildfire 订阅
+
+策略订阅 `strategy.context.delta.*`（通配符）会收到 **所有币种**的 context 更新（实测 43+ 个 subject），而非仅 candidate 币种。Python 事件循环处理不过来 → NATS SlowConsumer（日志 `nats.errors.SlowConsumerError`，stderr 可积累数百万条）→ HTTP overlay 调用被阻塞超时 → `account_risk_budget_missing`。
+
+**确诊**：
+```bash
+# 看 stderr 中 SlowConsumer 数量
+grep -c 'SlowConsumer' /opt/homebrew/var/crypto-trader/logs/realtime-strategy.stderr.log
+# 看 NATS stream 中 context.delta 的实际 subject 数
+nats stream subjects FEATURE_EVENTS | grep 'strategy.context.delta' | wc -l
+```
+
+**修复**：将 `strategy.context.delta.*` 改为 candidate 按需动态订阅：
+- candidate 选中时 `subscribe_json(f"strategy.context.delta.{symbol}", handler)`
+- candidate 释放/过期时 `unsubscribe`
+- 删掉通配符订阅 line
+
+同时 `handle_context` 加 early return 跳过无 candidate 的 symbol 作为防御。
 
 ## 参考
 
@@ -425,8 +475,10 @@ nats pub settings.changed '{"version":1}'
 - StrategySignalEvent 与 trade_params 参数传递规则：[references/trade-plan-signal-parameter-design.md](references/trade-plan-signal-parameter-design.md)
 - 持仓感知交易计划：[references/position-aware-trading-plan.md](references/position-aware-trading-plan.md)
 - 信号推送被拒诊断：[references/signal-rejection-diagnosis.md](references/signal-rejection-diagnosis.md)
+- 生产数据库直查诊断手册：[references/production-db-quick-diagnosis.md](references/production-db-quick-diagnosis.md)
 - 价格量化陷阱：[references/price-quantization-pitfalls.md](references/price-quantization-pitfalls.md)
 - risk_budget 模式 sizing 瓶颈：[references/risk-budget-sizing-pitfall.md](references/risk-budget-sizing-pitfall.md)
+- 策略胜率诊断与优化：[references/strategy-optimization-playbook.md](references/strategy-optimization-playbook.md)
 - 模板：[templates/dynamic_strategy.py](templates/dynamic_strategy.py)
 - 单测模板：[templates/unit_test.py](templates/unit_test.py)
 - 本地缓存 schema：[generated/capabilities.json](generated/capabilities.json)
