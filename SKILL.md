@@ -138,7 +138,7 @@ crypto-skill strategy executions detail --strategy-id <strategy_id> --execution-
 - 查某 symbol 上下文：`GET /api/v1/agent/strategy/context/{symbol}?strategy_id=<strategy_id>`
 - 整体 context：`GET /api/v1/agent/strategy/context?strategy_id=<strategy_id>`
 
-持仓过滤以返回字段 `owner_strategy_id` 为准。不要用全账户 `/agent/positions` 结果推断某策略可管理的仓位；`owner_strategy_id` 为空或不同的仓位视为外部仓位，只能作为冲突/占用信息，不允许生成 close、reverse、takeover 或保护单替换建议。写策略时优先读取 `context.owned_position` / `context.owner_runtime` / `context.strategy_account_fit`；`context.position` 和 `context.account_fit` 只代表账户或 symbol 的聚合视角，不能作为本策略拥有仓位的唯一依据。
+持仓过滤以返回字段 `owner_strategy_id` 为准。不要用全账户 `/agent/positions` 结果推断某策略可管理的仓位；`owner_strategy_id` 为空或不同的仓位视为外部仓位，只能作为冲突/占用信息，不允许生成 close、reverse、takeover 或保护单替换建议。写策略时只读取 `context.owned_position` / `context.owner_runtime` / `context.strategy_account_fit`；不要使用旧的全账户聚合字段推断本策略可管理仓位或额度。
 
 ## 策略级风控参数
 
@@ -215,8 +215,6 @@ class Strategy:
 | `context.owner_runtime` | `strategyOwnerRuntimeSnapshot` | 当前策略拥有的 runtime 归属、状态和冷却信息 |
 | `context.strategy_account_fit` | `strategyAccountFit` | 当前策略资金池、剩余额度、持仓槽位等策略视角 |
 | `context.foreign_owner_conflict` | bool | 当前 symbol 是否被其他策略占用 |
-| `context.position` | `strategyPositionSnapshot` | symbol 聚合持仓快照，仅作外部占用/冲突参考 |
-| `context.account_fit` | `strategyAccountFit` | 账户聚合适配摘要，不代表当前策略可用额度 |
 | `context.risk_limits` | `strategyRiskLimits` | 运行时风控：min_leverage / max_leverage / max_order_notional_pct 等 |
 
 ### 标准模式
@@ -451,7 +449,7 @@ ORDER BY created_at DESC LIMIT 20;
 **修复方向**：
 1. 确认 Go 后端 `/api/v1/agent/strategy/context/{symbol}?strategy_id=<strategy_id>` 路由正常响应（`curl` 验证）
 2. 检查 overlay `base_url` 配置（`STRATEGY_CONTEXT_API_URL` / `ZUOGE_CRYPTO_BASE_URL`）
-3. 策略侧防御：overlay 失败时降级使用 context 已有字段（如 `account_fit` 缓存），而不是直接拒绝所有信号
+3. 策略侧防御：`strategy_account_fit` 缺失时明确 `DEGRADED_SKIP` / `NO_TRADE`，不要回退到旧的全账户字段
 
 ### 6e. ⚠️ 同向加仓冷却过短 → 频繁加仓撞后端限制
 

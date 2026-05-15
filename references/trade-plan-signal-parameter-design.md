@@ -127,7 +127,6 @@ class Strategy:
 | `owner_runtime` | 当前策略拥有的 runtime 归属与状态。 |
 | `foreign_owner_conflict` | 其他策略是否占用该 symbol。 |
 | `strategy_account_fit` | 当前策略资金池、持仓槽位、剩余额度等策略可用信息。 |
-| `account_fit` | 全账户聚合视角，仅作背景，不代表当前策略可管理额度。 |
 | `risk_limits` | 运行时风险限制。 |
 | `symbol_metadata` | tick size、step size、min notional 等交易规格。 |
 
