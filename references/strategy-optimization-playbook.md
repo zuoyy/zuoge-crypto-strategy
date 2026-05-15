@@ -173,7 +173,76 @@ def _change_bonus(signed_change: float) -> float:
 - ✅ 可放宽：超买/超卖、4h trend——不直接决定方向质量
 - ❌ 不可碰：盘口方向 book gate、discover ±10% 天花板、止损宽度——碰了胜率崩
 
-## 迭代模式总结
+## 第五轮：信号收紧（2026-05-15）
+
+### 背景
+
+risk_budget sizing 修复后每笔 notional 从 $50 跃升至 ~$1,500，用户反馈"信号有点多，质量稍微提高一些"。
+
+### 修复
+
+只砍最弱尾巴，不碰结构性 gate：
+
+| 参数 | 旧值 | 新值 | 效果 |
+|------|------|------|------|
+| neutral_probe score floor | 82 | **85** | 弱信号要求更高 |
+| non-neutral score floor | 68 | **72** | 普通信号不放松 |
+| spread gate | > 25 bps | > **20 bps** | 只做流动性好的币 |
+
+### 原则
+
+收紧轮次只动「分数门槛」和「点差上限」——不影响结构性 gate（book 方向、discover 天花板、止损宽度）。
+
+## 第六轮：risk_budget sizing 公式倒置（2026-05-15）
+
+### 现象
+
+$5,000 账户，策略三笔持仓 notional 仅 $13–$50（0.26%–0.99% 账户），实际风险 $1（0.02%）。
+
+### 根因
+
+`_apply_risk_budget_sizing()` 中 `risk_pct` 被直接乘到名义金额上，而非风险金额：
+
+```python
+# ❌ 旧
+desired_notional = equity × risk_pct / 100    # $50
+risk_amount      = max_notional × stop_pct     # $1
+
+# ✅ 修复后
+target_risk_amount = equity × risk_pct / 100   # $50（风险金额）
+desired_notional   = target_risk_amount / stop_pct  # $2,500
+```
+
+详见 [risk-budget-formula-inversion.md](risk-budget-formula-inversion.md)。
+
+### 效果
+
+| 指标 | 修复前 | 修复后 |
+|------|--------|--------|
+| 每笔 notional | $13–$50 | ~$1,500（受 effective_order_cap 限制） |
+| 实际风险 | $1 (0.02%) | ~$30 (0.6%) |
+| 保证金 (11x) | $1–$5 | ~$136 |
+
+## 第七轮：Manifest Hash 静默失败（2026-05-15）
+
+### 发现
+
+修改策略代码后，策略进程正常运转（NATS 连接、订阅都在），但 candidate 池持续为空。排查链路：
+
+```
+修改 .py → 重启进程
+→ load_enabled_strategies() 校验 code_hash 不匹配
+→ 策略静默不加载 → handles = []
+→ discover() 从未调用 → candidate 池永远为空
+```
+
+### 教训
+
+1. 改策略代码后**必须更新两个 manifest 文件**的 `code_hash` 和 `code_sha256`
+2. 验证命令：`python3 -c "from runtime.strategy_manager import load_enabled_strategies; h,e=load_enabled_strategies(); print(len(h),len(e))"`
+3. 期望输出 `Handles: 1, Errors: 0`
+
+详见 [manifest-hash-silent-failure.md](manifest-hash-silent-failure.md)。
 
 ```
 1. 硬门控（宁缺毋滥） → 观察信号量

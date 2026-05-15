@@ -277,4 +277,5 @@ GROUP BY reason_code ORDER BY cnt DESC;
 - close_ratio 尾盘残留：[references/close-ratio-ladder-tail.md](references/close-ratio-ladder-tail.md)
 - change_bonus 衰减模式：[references/change-bonus-pattern.md](references/change-bonus-pattern.md)
 - Manifest hash 陷阱：[references/manifest-hash-silent-failure.md](references/manifest-hash-silent-failure.md)
+- risk_budget 公式倒置：[references/risk-budget-formula-inversion.md](references/risk-budget-formula-inversion.md)
 - 模板：[templates/dynamic_strategy.py](templates/dynamic_strategy.py)
