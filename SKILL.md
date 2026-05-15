@@ -108,6 +108,28 @@ crypto-skill strategy telegram disable
 
 即使开关已开启，如果当前没有加载到运行中的 enabled 策略，系统也不会推送空的 Telegram 简报。
 
+## 交易复盘与最近成交记录
+
+当用户要求复盘最近交易、查看成交记录、分析盈亏、按 symbol/signal/status 过滤执行时间线时，只通过 Agent API 或 `crypto-skill strategy executions ...` 读取；不要调用普通 `/api/v1/executions/...` 路由。
+
+推荐优先使用 CLI：
+
+```bash
+crypto-skill strategy executions recent --limit 20 --offset 0
+crypto-skill strategy executions recent --symbol BTCUSDT --pnl profit --from 2026-05-01T00:00:00Z --to 2026-05-15T23:59:59Z
+crypto-skill strategy executions timeline --symbol SOLUSDT --status filled --limit 50
+crypto-skill strategy executions timeline --signal-id <signal_id>
+crypto-skill strategy executions detail --execution-id <execution_id>
+```
+
+这些命令读取 `ZUOGE_CRYPTO_BASE_URL` 和 `ZUOGE_CRYPTO_API_KEY`（或 `AGENT_API_KEY`），实际访问：
+
+- `GET /api/v1/agent/executions/recent`
+- `GET /api/v1/agent/executions/timeline`
+- `GET /api/v1/agent/executions/{execution_id}`
+
+复盘输出应优先围绕：成交时间、symbol、方向、数量、价格、notional、已实现 PnL、关联 signal/action、风控决策、执行状态和异常原因。需要解释策略表现时，再联查 `crypto-skill strategy diagnose`、`/api/v1/agent/strategy/decision-logs`、`/api/v1/agent/strategy/context`；不要臆造未出现在成交或决策日志中的结论。
+
 ## 策略标准
 
 新策略必须实现：
