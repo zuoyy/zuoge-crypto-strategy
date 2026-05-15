@@ -26,11 +26,29 @@ description: "用于编写、校验、回测并自动投递实时策略候选到
 ⚠️ **先修评分公式，再调 gate 阈值。** 不要只调 `neutral_probe` score floor 或 `directional_book` gate——先检查评分公式本身是否奖励了错误行为。
 
 常见结构性陷阱：
-- **`flow_score` 奖励追涨**：`signed_change * N` 线性系数让拉得最凶的币得最高分。应改为奖金衰减（≤5% 线性，5-15% 衰减到 0，≥15% 不奖）。
+- **`flow_score` 奖励追涨**：`signed_change * N` 线性系数让拉得最凶的币得最高分。应改为奖金衰减（≤5% 线性，5-15% 衰减到 0，≥15% 不奖）。参见 [references/change-bonus-pattern.md](references/change-bonus-pattern.md)。
 - **`candidate_score`/`move_score` 奖励大波动**：`log1p(abs(change))` 不区分方向，涨 20% 和跌 20% 得同分。
-- **缺少超买/超卖过滤**：`position_in_range` 来自 1h/4h kline，>0.82 不做多，<0.18 不做空。
-- **缺少大趋势确认**：做多要求 4h `trend_return_pct > -0.8%`，做空要求 `< 0.8%`。
+- **缺少超买/超卖过滤**：`position_in_range` 来自 1h/4h kline，>0.88 不做多，<0.12 不做空。
+- **缺少大趋势确认**：做多要求 4h `trend_return_pct > -1.5%`，做空要求 `< 1.5%`。
 - **缺少市场 regime**：BTC 跌 >1.5% 时不做多 alts；BTC 涨 >1.5% 时不追空。
+
+### 阈值校准节奏
+
+门控从紧到松的迭代模式：
+1. **第一轮**：部署硬门控（0.82 超买、±0.8% trend），宁缺毋滥
+2. **观察 1-2 天**：信号量是否过低
+3. **第二轮**：适度放宽（0.82→0.88、±0.8%→±1.5%）——只放宽不伤害胜率的门；**绝不碰** 盘口方向 gate、discover ±10%、止损宽度
+4. 重复观察→调参直到信号量/胜率平衡
+
+### ⚠️ 修改后必须提交
+
+**任何**对 skill 文件（SKILL.md、references/*、templates/*）的修改后，立即执行：
+
+```bash
+cd /Users/zuo/.hermes/skills/zuoge-crypto-strategy && git add -A && git commit -m "skill: <简述>" && git push
+```
+
+不要等用户提醒。策略代码修改走项目 repo（`/Users/zuo/Documents/projects/crypto-trader`），同样修改后立即提交推送。生产部署后也要提交。
 
 ## 可移植安装
 
@@ -39,6 +57,8 @@ description: "用于编写、校验、回测并自动投递实时策略候选到
 所有相对引用都以本技能目录为基准读取，例如 `references/`、`templates/`、`generated/`。不要把技能安装目录误认为项目根目录。
 
 ## 工作流
+
+> **🔴 硬规则：所有策略修改必须走此工作流。** 不要跳过步骤直接修改生产 enabled 文件。若已修改的文件已是生产策略文件，也必须回填到候选目录、补走 check/test/backtest。
 
 在项目根目录内工作：
 
@@ -70,6 +90,73 @@ crypto-skill candidate publish --candidate <candidate_id>
 ```bash
 crypto-skill candidate export --candidate <candidate_id> --output tmp/ai-skill/<name>.json
 ```
+
+## ⚠️ 生产直接修改策略文件的完整步骤
+
+> **🚫 禁止直接修改生产文件作为默认操作。** 标准流程永远是「候选文件修改 → check → test → backtest → publish/deploy-current」。本节仅在 `deploy-current` 不可用、sudo 不可用、且候选已通过全部校验时，作为**最后后备手段**使用。不要在未经候选流程验证的情况下直接编辑生产策略。
+
+当需要绕过 `deploy-current` 直接修改生产 enabled 策略文件时（例如紧急 hotfix 且标准管道不可用），必须执行以下**全部**步骤，缺一不可：
+
+```bash
+# 1. 修改策略文件
+vim /opt/homebrew/var/crypto-trader/strategies/enabled/workflow_distilled_funnel_0_1_0.py
+
+# 2. ⚠️ 必须更新 manifest hash ——漏掉这步→策略静默不加载
+HASH=$(shasum -a 256 /opt/homebrew/var/crypto-trader/strategies/enabled/workflow_distilled_funnel_0_1_0.py | awk '{print $1}')
+python3 -c "
+import json
+for p in [
+    '/opt/homebrew/var/crypto-trader/releases/$(readlink /opt/homebrew/var/crypto-trader/current | xargs basename)/strategy/strategies/enabled/workflow_distilled_funnel_0_1_0.manifest.json',
+    '/opt/homebrew/var/crypto-trader/strategies/enabled/workflow_distilled_funnel_0_1_0.manifest.json',
+]:
+    with open(p) as f: m = json.load(f)
+    m['code_hash'] = '$HASH'
+    m['code_sha256'] = '$HASH'
+    with open(p, 'w') as f: json.dump(m, f, indent=2)
+"
+
+# 3. 同步到 release 目录的 enabled 子目录（真实加载路径）
+RELEASE=$(readlink /opt/homebrew/var/crypto-trader/current | xargs basename)
+mkdir -p /opt/homebrew/var/crypto-trader/releases/$RELEASE/strategy/strategies/enabled
+cp /opt/homebrew/var/crypto-trader/strategies/enabled/workflow_distilled_funnel_0_1_0.py /opt/homebrew/var/crypto-trader/releases/$RELEASE/strategy/strategies/enabled/
+cp /opt/homebrew/var/crypto-trader/strategies/enabled/workflow_distilled_funnel_0_1_0.manifest.json /opt/homebrew/var/crypto-trader/releases/$RELEASE/strategy/strategies/enabled/
+
+# 4. 清 pycache + 重启
+find /opt/homebrew/var/crypto-trader -name '__pycache__' -exec rm -rf {} + 2>/dev/null
+pkill -9 -f realtime_main   # KeepAlive=true → 自动重启
+
+# 5. ⚠️ 验证策略加载成功
+cd /opt/homebrew/var/crypto-trader/releases/$RELEASE && python3 -c "
+import sys; sys.path.insert(0,'strategy')
+from runtime.strategy_manager import load_enabled_strategies
+h,e = load_enabled_strategies()
+print(f'Handles: {len(h)}, Errors: {len(e)}')
+for x in e: print(f'  ✗ {x[\"error\"][:120]}')
+for x in h: print(f'  ✓ {x.strategy_id}')
+"
+# 期望输出：Handles: 1, Errors: 0  ✓ workflow_distilled_funnel
+```
+
+### 为什么有两个路径都要更新
+
+`strategy_manager.py` 的 `enabled_dir()` 解析路径：
+```python
+Path(__file__).resolve().parents[1] / "strategies" / "enabled"
+```
+`__file__` 是 `strategy_manager.py` 的实际路径，Python 导入时已解析 symlink → 指向 release 目录内的 `strategy/strategies/enabled/`。所以**真实加载路径是 release 目录内的 enabled**，不是顶层的 `/opt/homebrew/var/crypto-trader/strategies/enabled/`。但两边 manifest 都要更新以保持一致。
+
+### 如何快速诊断"策略未加载"
+
+```bash
+cd /opt/homebrew/var/crypto-trader/current && python3 -c "
+import sys; sys.path.insert(0,'strategy')
+from runtime.strategy_manager import load_enabled_strategies
+h,e = load_enabled_strategies()
+print(f'Handles: {len(h)}, Errors: {len(e)}')
+for x in e: print(x)
+"
+```
+如果输出 `code hash mismatch` → manifest 未更新。策略进程虽活着但 discover() 从未被调用。
 
 ## 发布当前策略目录
 
@@ -157,9 +244,13 @@ GROUP BY reason_code ORDER BY cnt DESC;
 ### 6. 排查致命错误模式
 
 **account_risk_budget_missing**: overlay 失败 → 全部 NO_TRADE
-**SlowConsumer 598万次**: `*` 通配符订阅 → 事件循环饥饿
+**SlowConsumer**: `*` 通配符订阅 → 事件循环饥饿。核对订阅方式应为 per-candidate 动态订阅
 **signals 全 expired 但有成交**: 查 fills + position_plan_runtimes
 **账户满仓死锁**: total_exposure>100%, remaining_budget=0
+**候选池始终为空但无 exception 日志**:
+  1. 先验证策略是否加载：`cd <release_dir> && python3 -c "from runtime.strategy_manager import load_enabled_strategies; h,e=load_enabled_strategies(); print(len(h),len(e))"`
+  2. 若 `Handles: 0, Errors: 1 → code hash mismatch` → manifest 的 `code_hash` 字段未更新，参照「生产直接修改策略文件的完整步骤」
+  3. 若 Handles=1 仍无 candidate → 查 discover() 过滤逻辑（见下方 discovery 死寂排查）
 
 详见 [references/production-db-quick-diagnosis.md](references/production-db-quick-diagnosis.md)。
 
@@ -175,4 +266,6 @@ GROUP BY reason_code ORDER BY cnt DESC;
 - 价格量化陷阱：[references/price-quantization-pitfalls.md](references/price-quantization-pitfalls.md)
 - risk_budget sizing 瓶颈：[references/risk-budget-sizing-pitfall.md](references/risk-budget-sizing-pitfall.md)
 - close_ratio 尾盘残留：[references/close-ratio-ladder-tail.md](references/close-ratio-ladder-tail.md)
+- change_bonus 衰减模式：[references/change-bonus-pattern.md](references/change-bonus-pattern.md)
+- Manifest hash 陷阱：[references/manifest-hash-silent-failure.md](references/manifest-hash-silent-failure.md)
 - 模板：[templates/dynamic_strategy.py](templates/dynamic_strategy.py)
