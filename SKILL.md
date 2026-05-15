@@ -305,6 +305,7 @@ GROUP BY reason_code ORDER BY cnt DESC;
 - **止损波动率**：双源波动率代理（24h change + 1h trend），替代单源 24h change。短时剧烈波动的币自动放宽止损，已冷却的币自动收紧。详见 [references/stop-formula-dual-volatility.md](references/stop-formula-dual-volatility.md)。
 - **阶段多样性**：加 `early_trend` 过渡阶段解决全 short 单一信号问题 + long book gate 放宽 ±0.03 中性区。详见 [references/stage-classification-diversity.md](references/stage-classification-diversity.md)。
 - **阶段诊断**：信号阶段分布分析、死代码检查（sweep_reclaim）、BTC regime gate 影响、stage_bonus 配置。详见 [references/stage-diversity-diagnosis.md](references/stage-diversity-diagnosis.md)。
+- **Gate 迭代校准**：query→fix→requery 循环，连锁反应观察，gate 放宽优先级排序。详见 [references/gate-calibration-iterative.md](references/gate-calibration-iterative.md)。
 
 ## 参考
 

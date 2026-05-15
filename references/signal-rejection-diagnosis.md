@@ -307,3 +307,36 @@ JOIN signals s ON s.signal_id = rd.signal_id
 WHERE rd.passed = false
 ORDER BY rd.created_at DESC LIMIT 5;
 ```
+
+## `execution_constraints` 缺失 — close 信号特例
+
+### 症状
+
+Go backend reject：
+> `"validation failed for trade_params.entry.price.acceptable_range: price protection is required via acceptable_range or execution_constraints.max_slippage_pct"`
+
+### 根因
+
+所有信号（包括 market close）都必须包含 `execution_constraints.max_slippage_pct`。手动构建的 close 信号（rotation close、general close）容易漏掉此字段，因为：
+- `signal_envelope()` 在正常开仓信号流中由 `_apply_execution_constraints()` 补全
+- 但 rotation close 信号是手动构建 dict，不走 `_apply_signal_form_contract` 流程
+
+### 修复
+
+手动构建的 close 信号必须包含：
+```python
+"execution_constraints": {
+    "max_slippage_pct": "0.003",
+    "min_reward_risk": "1.0",
+    "quote_staleness_seconds": 20,
+}
+```
+
+### 排查
+
+```sql
+SELECT reason_code, reason, rejected_at
+FROM strategy_signal_rejects
+WHERE reason LIKE '%price protection%'
+ORDER BY rejected_at DESC LIMIT 10;
+```
