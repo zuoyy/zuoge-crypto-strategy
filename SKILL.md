@@ -49,7 +49,7 @@ description: "用于编写、校验、回测并自动投递实时策略候选到
 cd /Users/zuo/.hermes/skills/zuoge-crypto-strategy && git add -A && git commit -m "skill: <简述>" && git push
 ```
 
-不要等用户提醒。
+不要等用户提醒。策略代码修改走项目 repo（**仅读取/编辑，不提交**，见下方 Git 权限边界）。
 
 ### ⚠️ Git 权限边界
 
@@ -262,6 +262,21 @@ GROUP BY reason_code ORDER BY cnt DESC;
 
 详见 [references/production-db-quick-diagnosis.md](references/production-db-quick-diagnosis.md)。
 
+### 运行时健康检查
+
+当用户问"策略是否正常"时，按 [references/production-runtime-diagnosis.md](references/production-runtime-diagnosis.md) 的 6 层检查清单执行：进程层→策略加载层→决策产出层→NATS 连通层→账户层→故障模式速查。核心查询：
+
+- `strategy_decision_logs` 聚合：`SELECT reason, COUNT(*) ... GROUP BY reason` 直接揭示为什么没信号
+- macOS `sample <PID>` 探查无日志进程的调用栈
+- `ps eww <PID>` / `lsof -p <PID>` 确认进程环境和工作目录
+- ⚠️ `subsz` 可能不显示 `nats-py` 订阅 → **decision_logs 才是进程活着的唯一可靠证据**
+
+### 杠杆与下单金额
+
+- **杠杆**：`pick_leverage()` 动态计算，从 `risk_limits.min/max_leverage` 读范围，按阶段/分数/波动率调参。保守阶段（neutral_probe 等）→ 固定 `min_leverage`。详见 [references/leverage-dynamic-calculation.md](references/leverage-dynamic-calculation.md)。
+- **下单金额**：`desired_notional = min(risk/stop, equity × max_order_pct)`，其中 `max_order_pct = risk_limits.max_order_notional_pct / 100`。后端修改后策略自动跟随，无需改代码。详见 [references/max-order-notional-dynamic.md](references/max-order-notional-dynamic.md)。
+- **加仓**：score≥80 + PnL≥0 + 非 neutral_probe，最多加 1 次，冷却 120 分钟。详见 [references/position-management-add-gate.md](references/position-management-add-gate.md)。
+
 ## 参考
 
 - 详细流程：[references/authoring-workflow.zh-CN.md](references/authoring-workflow.zh-CN.md)
@@ -277,5 +292,9 @@ GROUP BY reason_code ORDER BY cnt DESC;
 - close_ratio 尾盘残留：[references/close-ratio-ladder-tail.md](references/close-ratio-ladder-tail.md)
 - change_bonus 衰减模式：[references/change-bonus-pattern.md](references/change-bonus-pattern.md)
 - Manifest hash 陷阱：[references/manifest-hash-silent-failure.md](references/manifest-hash-silent-failure.md)
-- risk_budget 公式倒置：[references/risk-budget-formula-inversion.md](references/risk-budget-formula-inversion.md)
+- Signal 重复推送冷却：[references/signal-dedup-cooldown.md](references/signal-dedup-cooldown.md)
+- 生产运行时诊断：[references/production-runtime-diagnosis.md](references/production-runtime-diagnosis.md)
+- 动态杠杆计算：[references/leverage-dynamic-calculation.md](references/leverage-dynamic-calculation.md)
+- 持仓管理与加仓门禁：[references/position-management-add-gate.md](references/position-management-add-gate.md)
+- 动态下单金额封顶：[references/max-order-notional-dynamic.md](references/max-order-notional-dynamic.md)
 - 模板：[templates/dynamic_strategy.py](templates/dynamic_strategy.py)

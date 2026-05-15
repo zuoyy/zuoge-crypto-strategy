@@ -103,7 +103,34 @@ ORDER BY SUM(f.realized_pnl);
 | 2 | **`_trade_gate`** 盘口 | long 要求 `book ≥ 0`，short 要求 `book ≤ 0` |
 | 3 | **`_trade_gate`** 追涨 | long + `change > 8%` → 拒；short + `change < -8%` → 拒 |
 
-## 第三次优化：结构性问题（2026-05-15）
+## 第三次优化：信号去重 + sizing 校准（2026-05-15）
+
+### 现象
+
+1. ACTUSDT 同一秒内推送 8 个重复信号，score/参数完全相同，后端全部拒绝
+2. 下单金额 $50 notional 过小，修复公式倒置后 $2,556 又过大被拒"超过单笔预算"
+
+### 修复
+
+| # | 问题 | 修复 |
+|---|------|------|
+| 1 | 重复信号 | `_last_signal_at` 字典，symbol:side 冷却 120s |
+| 2 | sizing 公式倒置 | risk_pct 从 notional% 改为 risk%：`desired_notional = target_risk / stop_pct` |
+| 3 | 单笔超预算 | 加 20% 净值封顶：`desired_notional = min(desired_notional, equity × 0.20)` |
+
+### 当前门控参数快照
+
+| 参数 | 值 |
+|------|-----|
+| neutral_probe floor | 85 |
+| stage (非 neutral) floor | 72 |
+| spread gate | 20 bps |
+| 超买 long | pos > 0.88 |
+| 4h trend long | < -1.5% |
+| discover 天花板 | ±10% |
+| 盘口方向 | long: book≥0, short: book≤0 |
+| ±8% 追涨/杀跌 gate | 非 breakout 阶段拦截 |
+| signal 冷却 | 120s 同 symbol/side |
 
 ### ⚠️ 关键教训
 

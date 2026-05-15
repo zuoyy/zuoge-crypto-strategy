@@ -32,9 +32,36 @@ desired_notional   = target_risk_amount / stop_pct  # $50 / 0.02 = $2,500
 | GOATUSDT | $33 | $2,500 |
 | XANUSDT | $13 | $2,500 |
 
-## 修复位置
+## 修复（两次迭代）
 
-`_apply_risk_budget_sizing()` 中 `desired_notional` 的计算行。
+### 第一轮：公式倒置修复
+
+`_apply_risk_budget_sizing()` 中 `risk_pct` 从 notional % 改为 risk %：
+
+```python
+# ❌ 修复前
+desired_notional = allocated_equity * risk_pct / 100.0    # $50
+
+# ✅ 修复后
+target_risk_amount = allocated_equity * risk_pct / 100.0   # $50 = 1% 风险
+desired_notional = target_risk_amount / stop_pct            # $50 / 0.02 = $2,556
+```
+
+### 第二轮：20% 净值封顶
+
+公式倒置后 `desired_notional` 可能过大（$2,556），超过 Go 后端单笔预算被拒（"下单金额超过当前策略单笔预算"）。加 20% 净值硬上限：
+
+```python
+max_notional_cap_pct = 0.20  # single order ≤ 20% of equity
+desired_notional = min(desired_notional, allocated_equity * max_notional_cap_pct)
+# $2,556 → capped at $5,113 × 0.20 = $1,022
+```
+
+最终链路（risk_pct=1%，stop=2%，equity=$5,113）：
+```
+target_risk = $51 → / 0.02 = $2,556 → cap 20% = $1,022
+max_notional = min($1,022, $2,045, …) = $1,022  ✅
+```
 
 ## 相关
 
