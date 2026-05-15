@@ -158,6 +158,7 @@ class Strategy:
 - `expire_ms` 默认值改为 **60000（60s）**；原 15000（15s）在 NATS 投递 + ingress 消费 + 行情校验链路中经常不够，导致 `market_seq_too_old` 和 `signal_expired`。SDK `signal_envelope()` 已更新默认值。
 - **杠杆**：不再硬编码。`basic_trade_params()` 调用 `pick_leverage(context, *, volatility_pct, score, stage)` 在 `context.risk_limits` 的 `[min_leverage, max_leverage]` 范围内按币种动态选杠杆。保守阶段（sweep/reversal/neutral）用最小杠杆；高分+低波动→加杠杆；高波动→降杠杆。策略可通过 `leverage_score`/`leverage_stage`/`leverage_vol_pct` 参数传递信号上下文。后端必须在 `strategyRiskLimits` 暴露 `min_leverage`/`max_leverage` 字段（从 `risk.Limits` 读取），否则 `pick_leverage()` fallback 5x–20x。**杠杆必须为整数**（Binance 要求），`pick_leverage()` 返回 `int`，`margin.leverage` 强制 `str(int(...))`。
 - **盈亏比与量化**：超低价币 tick_size 粗于价格波动时，`quantize_price()` 可能同时破坏止损和止盈方向/比例。SDK `_quantized_or_fallback()` 新增 `min_above`/`max_below`/`min_value` 三个边界保护，`basic_trade_params()` 使用 `actual_risk`（量化后真实止损距离）而非公式距离计算 TP。详见 [references/price-quantization-pitfalls.md](references/price-quantization-pitfalls.md)。\n- **⚠️ TP 阶梯崩溃**：`tp1_ratio = max(reward_risk, 1.5)` 在 `reward_risk ≥ 1.5` 时等于 `reward_risk`，导致 TP1 == TP2。修复：`tp1_ratio = 1.5` 固定近端；`min_reward_risk = \"1.5\"` 匹配 Go 校验。这**不是量化问题**，是纯逻辑 bug，详见 [references/price-quantization-pitfalls.md](references/price-quantization-pitfalls.md) 模式 4。
+- **⚠️ close_ratio 尾盘残留**：阶梯止盈最后一档必须 `close_ratio=\"1.0\"`（哨兵值，映射到 Binance `ClosePosition=true`）。初始下单时用入场原始仓位算量没问题，但 TP1 触发后 `syncExchangeProtectiveOrders` 会用**当前剩余仓位**重算后续 TP 量——若最后一档是 `0.5` 则 `0.5 × remaining`，清不干净。`1.0` 绕过乘法，执行端走 `ClosePosition=true` 全平。Go 校验已允许最后一档 `close_ratio=1.0` 不计入 sum check。详见 [references/close-ratio-ladder-tail.md](references/close-ratio-ladder-tail.md)。
 - **持仓感知**：策略不应盲开仓。SDK 提供 `position_snapshot(context)` 提取持仓完整信息（side/qty/entry_price/unrealized_pnl/notional）。策略必须在 `build_signals_from_context()` 中读取持仓，在 `_trade_gate` 中做：同向持仓→允许加仓但检查敞口和浮亏；反向持仓→仅强 setup+高分允许反手。详见 [references/position-aware-trading-plan.md](references/position-aware-trading-plan.md)。
 - **`max_notional` 瓶颈（risk_budget 模式）**：`basic_trade_params()` 按现金口径（`equity * pct / 100`）算 `max_notional`（如 $50），但 Go 后端 `computeSizing()` 在 risk_budget 模式下算出 `notional = target_risk_amount / stop_pct`（如 $4,180）后，会用 `max_notional` 做硬上限（line 404）。结果 $4,180 被压回 $50，下单量极小。修复：切到 risk_budget 后，**必须重新计算 `max_notional`**，至少设为 `risk_amount / stop_pct * 1.3`，上限 `equity * leverage * max_symbol_exposure_pct / 100`。详见 [references/risk-budget-sizing-pitfall.md](references/risk-budget-sizing-pitfall.md)。
 
@@ -191,7 +192,9 @@ def build_signals_from_context(self, context: dict) -> list[dict]:
     # 4. 交易门控（市场 + 账户 + 持仓三重检查）
     ok, reason = self._trade_gate(state, context, position)
     if not ok:
-        return []  # + decision_log
+        # 门控失败 → 检查是否需要平仓
+        close_signal = self._maybe_close_position(context, position, side, state)
+        return [close_signal] if close_signal else []
 
     # 5. 仓位预算（同向加仓时减半）
     risk_pct = self._risk_budget_pct(context, state, position)
@@ -229,12 +232,48 @@ def build_signals_from_context(self, context: dict) -> list[dict]:
    - signal intent 由 `strategy_sdk.intent_for_side()` 自动生成 `REVERSE_*`
    - `position_management.allow_reverse_on_opposite_signal = true`
 
+### 持仓退出管理（CLOSE 信号）
+
+系统支持 `CLOSE_LONG` / `CLOSE_SHORT` intent（映射到 `position_intent: close`）。策略在两种场景下发 CLOSE：
+
+1. **门控失败 + 需平仓**：`_trade_gate` 返回 False 后调用 `_maybe_close_position()`：
+   - 浮亏 ≥ 5% → `loss_protection`
+   - candidate 方向与持仓相反 + 仓位浮亏 → `opposite_signal_losing`
+
+2. **开仓时预设退出**：
+   - **Trailing stop**：除 `neutral_probe` 外所有阶段启用。激活阈值 = stop 距离 × 1.0；`move_to_break_even=true`
+   - **Time stop**：breakout 120min / expansion 180min / sweep 240min / pullback 360min / 其他 480min
+
+```python
+# CLOSE 信号模板（极简，无 entry/sizing/exit 需求）
+def _build_close_signal(self, context, side, reason):
+    signal = strategy_sdk.signal_envelope(
+        strategy_id=..., strategy_version=..., context=context, side=side,
+        confidence=0.99, reason=f"close_{side}: {reason}",
+        trade_params={
+            "entry": {"trigger": {"type": "immediate"}, "price": {"order_type": "market"},
+                       "timing": {"expire_after_seconds": 30}},
+            "exits": {"stop_loss": {"mode": "none"}, "take_profit": {"mode": "none"},
+                       "trailing_stop": {"enabled": False}, "time_stop": {"enabled": False}},
+            "sizing": {"mode": "fixed_quantity", "target_quantity": "...",
+                       "allow_downsize": False},
+        },
+        source="Hermes", expire_ms=60000,
+    )
+    signal["intent"] = strategy_sdk.close_intent_for_side(side)
+    return signal
+```
+
+⚠️ 架构限制：策略只在 candidate ready 时被调用。如果持仓标的没有 candidate，策略不会被唤醒做平仓检查。完全覆盖需要后续在 runtime 层加"持仓监控订阅"。
+
 ### SDK 持仓工具
 
 | 函数 | 返回 |
 |------|------|
 | `position_snapshot(context)` | `{side, qty, quantity, entry_price, notional, unrealized_pnl, leverage, margin_type, has_position}` |
-| `pick_leverage(context, *, volatility_pct, score, stage)` | `float` — 在 `[min_leverage, max_leverage]` 范围内按风险画像选杠杆 |
+| `pick_leverage(context, *, volatility_pct, score, stage)` | `int` — 在 `[min_leverage, max_leverage]` 范围内按风险画像选杠杆 |
+| `close_intent_for_side(side)` | `"CLOSE_LONG"` 或 `"CLOSE_SHORT"` |
+| `should_close_position(position, context, *, max_holding_minutes, loss_pct)` | `(bool, str)` — 检查是否应平仓 |
 
 详见 [references/position-aware-trading-plan.md](references/position-aware-trading-plan.md)。
 

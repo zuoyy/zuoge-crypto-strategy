@@ -335,7 +335,7 @@ ingress 会用这些实时字段做最后防线：
 | --- | --- |
 | `mode` | `fixed_price`、`ladder`、`none`。 |
 | `targets[].price` | `fixed_price` 或 `ladder` 时必填。 |
-| `targets[].close_ratio` | 必须大于 0，目标总和不能超过 1。 |
+| `targets[].close_ratio` | 必须大于 0。非最后目标的 close_ratio 总和不能超过 1。最后一个目标的 close_ratio 建议设为 `1.0`（哨兵值），映射到 Binance `ClosePosition=true` 全平剩余，不计入 sum check。`fixed_price` 模式必须 `close_ratio=1`。 |
 
 `fixed_price` 必须正好 1 个 target，且 `close_ratio=1`。
 
@@ -540,7 +540,7 @@ AI 编写或修改策略后，必须逐项检查：
 - `trade_params.entry` 有触发条件、订单类型、有效期和价格保护。
 - `trade_params.exits` 有可计算止损；`risk_budget` 不搭配 `stop_loss.mode=none`。
 - 多头止损低于入场参考价，止盈高于入场参考价；空头相反。
-- ladder 止盈方向正确，`close_ratio` 总和不超过 1。
+- ladder 止盈方向正确，最后一档 `close_ratio=1.0`（全平剩余），非最后目标 close_ratio 总和不超过 1。
 - `sizing` 的目标字段与 `mode` 匹配，min/max 范围不冲突。
 - `allow_add_position=false` 时 `max_add_count=0`。
 - `take_profit.mode=ladder` 时 `allow_partial_exit=true`。
