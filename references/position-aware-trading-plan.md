@@ -13,9 +13,17 @@
 ### 第一步：读持仓
 
 ```python
-position = strategy_sdk.position_snapshot(context)
+position = strategy_sdk.position_snapshot({"position": context.get("owned_position")})
 # → {side, qty, entry_price, unrealized_pnl, notional, has_position, ...}
 ```
+
+如果需要批量查看某策略当前所有自有持仓，使用 Agent API：
+
+```http
+GET /api/v1/agent/positions?strategy_id=<strategy_id>
+```
+
+只允许管理 `owner_strategy_id == 当前策略 ID` 的仓位。其他策略或 unknown owner 的仓位只能作为占用/冲突，不允许 close/reverse/takeover。
 
 ### 第二步：持仓冲突门控
 
@@ -93,14 +101,16 @@ trade_params = strategy_sdk.basic_trade_params(
 
 | 字段 | 策略用途 |
 |------|---------|
-| `context.position.side` | 当前持仓方向 |
-| `context.position.qty` | 持仓数量 |
-| `context.position.entry_price` | 开仓均价 |
-| `context.position.unrealized_pnl` | 浮动盈亏 |
-| `context.position.notional` | 名义价值 |
-| `context.account_fit.symbol_exposure_pct` | 该币种敞口占比 |
-| `context.account_fit.remaining_symbol_budget_pct` | 该币种剩余预算 |
-| `context.account_fit.remaining_total_budget_pct` | 全账户剩余预算 |
+| `context.owned_position.side` | 当前策略自有持仓方向 |
+| `context.owned_position.qty` | 当前策略自有持仓数量 |
+| `context.owned_position.entry_price` | 当前策略自有持仓开仓均价 |
+| `context.owned_position.unrealized_pnl` | 当前策略自有持仓浮动盈亏 |
+| `context.owned_position.notional` | 当前策略自有持仓名义价值 |
+| `context.owner_runtime.runtime_status` | 当前策略自有 runtime 状态 |
+| `context.foreign_owner_conflict` | 是否存在其他策略占用该 symbol |
+| `context.strategy_account_fit.symbol_exposure_pct` | 该策略在该币种的资金池内敞口占比 |
+| `context.strategy_account_fit.remaining_symbol_budget_pct` | 该策略该币种剩余预算 |
+| `context.strategy_account_fit.remaining_total_budget_pct` | 该策略总剩余预算 |
 | `context.risk_limits.min_leverage` | 最小杠杆 |
 | `context.risk_limits.max_leverage` | 最大杠杆 |
 | `context.risk_limits.max_symbol_exposure_pct` | 单币种敞口上限 |

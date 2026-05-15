@@ -17,7 +17,7 @@ description: "用于编写、校验、回测并自动投递实时策略候选到
 1. 确认项目根目录。优先使用当前工作区；否则读取 `ZUOGE_CRYPTO_PROJECT_ROOT`；目录内必须存在 `cmd/crypto-skill/main.go` 和 `strategy/runtime/strategy_sdk.py`。
 2. 切换到项目根目录工作。候选策略登记、检查、测试、回测、报告和候选包投递都通过 `crypto-skill` 操作；本地阶段使用本地源码目录和本地开发数据库。
 3. 本地候选操作不要求 API 服务启动；如果当前 shell 没有 `DATABASE_URL`，`crypto-skill` 会读取项目根目录 `.env.dev`。默认只允许连接库名以 `_dev` 结尾的开发库。
-4. 只有查询实时能力目录、实时 context、订阅状态、决策日志这类运行态信息时，才调用 Agent API。
+4. 只有查询实时能力目录、实时 context、订阅状态、决策日志、策略自有持仓这类运行态信息时，才调用 Agent API。
 
 调用 API 时只能使用 `/api/v1/agent/...` 路由。不要使用网页控制台 cookie，不要调用普通 `/api/v1/...` 路由。
 
@@ -110,25 +110,44 @@ crypto-skill strategy telegram disable
 
 ## 交易复盘与最近成交记录
 
-当用户要求复盘最近交易、查看成交记录、分析盈亏、按 symbol/signal/status 过滤执行时间线时，只通过 Agent API 或 `crypto-skill strategy executions ...` 读取；不要调用普通 `/api/v1/executions/...` 路由。
+当用户要求复盘最近交易、查看成交记录、分析盈亏、按 symbol/signal/status 过滤执行时间线时，只通过 Agent API 或 `crypto-skill strategy executions ...` 读取；不要调用普通 `/api/v1/executions/...` 路由。多策略制度下，成交记录必须按 `strategy_id` 查询；没有明确策略时先确认策略 ID，不要返回全账户成交冒充策略成交。
 
 推荐优先使用 CLI：
 
 ```bash
-crypto-skill strategy executions recent --limit 20 --offset 0
-crypto-skill strategy executions recent --symbol BTCUSDT --pnl profit --from 2026-05-01T00:00:00Z --to 2026-05-15T23:59:59Z
-crypto-skill strategy executions timeline --symbol SOLUSDT --status filled --limit 50
-crypto-skill strategy executions timeline --signal-id <signal_id>
-crypto-skill strategy executions detail --execution-id <execution_id>
+crypto-skill strategy executions recent --strategy-id <strategy_id> --limit 20 --offset 0
+crypto-skill strategy executions recent --strategy-id <strategy_id> --symbol BTCUSDT --pnl profit --from 2026-05-01T00:00:00Z --to 2026-05-15T23:59:59Z
+crypto-skill strategy executions timeline --strategy-id <strategy_id> --symbol SOLUSDT --status filled --limit 50
+crypto-skill strategy executions timeline --strategy-id <strategy_id> --signal-id <signal_id>
+crypto-skill strategy executions detail --strategy-id <strategy_id> --execution-id <execution_id>
 ```
 
 这些命令读取 `ZUOGE_CRYPTO_BASE_URL` 和 `ZUOGE_CRYPTO_API_KEY`（或 `AGENT_API_KEY`），实际访问：
 
-- `GET /api/v1/agent/executions/recent`
-- `GET /api/v1/agent/executions/timeline`
-- `GET /api/v1/agent/executions/{execution_id}`
+- `GET /api/v1/agent/executions/recent?strategy_id=<strategy_id>`
+- `GET /api/v1/agent/executions/timeline?strategy_id=<strategy_id>`
+- `GET /api/v1/agent/executions/{execution_id}?strategy_id=<strategy_id>`
 
-复盘输出应优先围绕：成交时间、symbol、方向、数量、价格、notional、已实现 PnL、关联 signal/action、风控决策、执行状态和异常原因。需要解释策略表现时，再联查 `crypto-skill strategy diagnose`、`/api/v1/agent/strategy/decision-logs`、`/api/v1/agent/strategy/context`；不要臆造未出现在成交或决策日志中的结论。
+复盘输出应优先围绕：成交时间、symbol、方向、数量、价格、notional、已实现 PnL、关联 signal/action、策略级风控决策、执行状态和异常原因。需要解释策略表现时，再联查 `crypto-skill strategy diagnose`、`/api/v1/agent/strategy/decision-logs`、`/api/v1/agent/strategy/context?strategy_id=<strategy_id>`；不要臆造未出现在成交或决策日志中的结论。
+
+## 策略自有持仓查询
+
+多策略制度下，策略只能管理自己拥有的持仓。凡是用户指定某个策略、要求检查持仓、调整持仓管理、生成 close/reverse/add 逻辑，必须使用该策略的 `strategy_id` 视角读取持仓：
+
+- 批量查自有持仓：`GET /api/v1/agent/positions?strategy_id=<strategy_id>`
+- 查某 symbol 上下文：`GET /api/v1/agent/strategy/context/{symbol}?strategy_id=<strategy_id>`
+- 整体 context：`GET /api/v1/agent/strategy/context?strategy_id=<strategy_id>`
+
+持仓过滤以返回字段 `owner_strategy_id` 为准。不要用全账户 `/agent/positions` 结果推断某策略可管理的仓位；`owner_strategy_id` 为空或不同的仓位视为外部仓位，只能作为冲突/占用信息，不允许生成 close、reverse、takeover 或保护单替换建议。写策略时优先读取 `context.owned_position` / `context.owner_runtime` / `context.strategy_account_fit`；`context.position` 和 `context.account_fit` 只代表账户或 symbol 的聚合视角，不能作为本策略拥有仓位的唯一依据。
+
+## 策略级风控参数
+
+策略端读取风控参数必须使用策略级预算和上下文，不要用全局 `/api/v1/risk/limits` 推断某策略额度：
+
+- 当前策略预算配置：`GET /api/v1/agent/strategy-risk-allocations/{strategy_id}?venue=testnet|live`
+- 当前 symbol 策略视角：`GET /api/v1/agent/strategy/context/{symbol}?strategy_id=<strategy_id>`
+
+风控参数解释优先使用 `context.strategy_account_fit` 和 `context.risk_limits` 中的策略级字段：`allocation_pct`、`allocated_equity`、`remaining_symbol_budget_pct`、`remaining_total_budget_pct`、`max_order_notional_pct`、`max_symbol_exposure_pct`、`max_total_exposure_pct`。全局风控只作为系统硬上限背景，不能当作策略可用额度。
 
 ## 策略标准
 
@@ -192,8 +211,12 @@ class Strategy:
 
 | 字段 | 来源 | 内容 |
 |------|------|------|
-| `context.position` | `strategyPositionSnapshot` | 完整持仓快照：side / qty / entry_price / unrealized_pnl / notional / leverage |
-| `context.account_fit` | `strategyAccountFit` | 账户适配摘要：remaining budgets / exposure / open slots |
+| `context.owned_position` | `strategyPositionSnapshot` | 当前策略拥有的持仓快照：side / qty / entry_price / unrealized_pnl / notional / leverage |
+| `context.owner_runtime` | `strategyOwnerRuntimeSnapshot` | 当前策略拥有的 runtime 归属、状态和冷却信息 |
+| `context.strategy_account_fit` | `strategyAccountFit` | 当前策略资金池、剩余额度、持仓槽位等策略视角 |
+| `context.foreign_owner_conflict` | bool | 当前 symbol 是否被其他策略占用 |
+| `context.position` | `strategyPositionSnapshot` | symbol 聚合持仓快照，仅作外部占用/冲突参考 |
+| `context.account_fit` | `strategyAccountFit` | 账户聚合适配摘要，不代表当前策略可用额度 |
 | `context.risk_limits` | `strategyRiskLimits` | 运行时风控：min_leverage / max_leverage / max_order_notional_pct 等 |
 
 ### 标准模式
@@ -203,7 +226,7 @@ def build_signals_from_context(self, context: dict) -> list[dict]:
     # … warmup / status / quote checks …
 
     # 1. 读持仓
-    position = strategy_sdk.position_snapshot(context)
+    position = strategy_sdk.position_snapshot({"position": context.get("owned_position")})
 
     # 2. 读标的行情
     price = strategy_sdk.price_for_side(context, side)
@@ -413,7 +436,7 @@ nats pub settings.changed '{"version":1}'
 
 ### 6d. ⚠️ `account_risk_budget_missing` — overlay 失败导致全场 NO_TRADE
 
-当 strategy context overlay 调用 Go 后端 `/api/v1/agent/strategy/context/{symbol}` 失败时（日志出现 `strategy_context_overlay_failed`），`context.account_fit` 为空，策略的 `_account_gate()` 读到 `remaining_symbol_budget_pct=0` → 返回 False → **所有信号全部 NO_TRADE**，策略完全停摆。
+当 strategy context overlay 调用 Go 后端 `/api/v1/agent/strategy/context/{symbol}?strategy_id=<strategy_id>` 失败时（日志出现 `strategy_context_overlay_failed`），`context.strategy_account_fit` 为空，策略的 `_account_gate()` 读到 `remaining_symbol_budget_pct=0` → 返回 False → **所有信号全部 NO_TRADE**，策略完全停摆。
 
 **最快确认方式**（绕过 API 直接查生产 DB）：
 
@@ -426,7 +449,7 @@ ORDER BY created_at DESC LIMIT 20;
 ```
 
 **修复方向**：
-1. 确认 Go 后端 `/api/v1/agent/strategy/context/{symbol}` 路由正常响应（`curl` 验证）
+1. 确认 Go 后端 `/api/v1/agent/strategy/context/{symbol}?strategy_id=<strategy_id>` 路由正常响应（`curl` 验证）
 2. 检查 overlay `base_url` 配置（`STRATEGY_CONTEXT_API_URL` / `ZUOGE_CRYPTO_BASE_URL`）
 3. 策略侧防御：overlay 失败时降级使用 context 已有字段（如 `account_fit` 缓存），而不是直接拒绝所有信号
 

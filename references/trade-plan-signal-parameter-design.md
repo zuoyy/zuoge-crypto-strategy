@@ -122,7 +122,12 @@ class Strategy:
 | `derivatives` | 合约衍生品特征，例如 funding。 |
 | `ticker` | 24h ticker 派生字段。 |
 | `features` | feature-engine 计算的复合特征。 |
-| `account_fit` | 账户、持仓、剩余额度等策略可用信息。 |
+| `strategy_id` | 当前策略视角；请求 Agent context 时必须传入。 |
+| `owned_position` | 当前策略拥有的持仓；策略 close/reverse/add 只能基于它。 |
+| `owner_runtime` | 当前策略拥有的 runtime 归属与状态。 |
+| `foreign_owner_conflict` | 其他策略是否占用该 symbol。 |
+| `strategy_account_fit` | 当前策略资金池、持仓槽位、剩余额度等策略可用信息。 |
+| `account_fit` | 全账户聚合视角，仅作背景，不代表当前策略可管理额度。 |
 | `risk_limits` | 运行时风险限制。 |
 | `symbol_metadata` | tick size、step size、min notional 等交易规格。 |
 
@@ -133,7 +138,7 @@ class Strategy:
 3. 检查 `quote_dependency.status` 是否为 `fresh`。
 4. 从 `candidate.side` 取方向，不要自行凭空改方向。
 5. 用 `strategy_sdk.price_for_side(context, side)` 取可执行参考价。
-6. 对账户、持仓、冷却、敞口和行情质量做策略侧 gate。
+6. 对策略自有持仓、冷却、资金池敞口和行情质量做策略侧 gate；不要管理 `owner_strategy_id` 不等于当前策略的仓位。
 
 如果任一条件不满足，返回 `[]`，并记录 `WAIT_WARMUP`、`DEGRADED_SKIP`、`NO_TRADE` 或 `VALIDATION_FAILED`。
 
@@ -406,7 +411,7 @@ ingress 会用这些实时字段做最后防线：
 - `target_quantity <= max_quantity`
 - 如果允许风控缩量，建议 `allow_downsize=true`
 
-策略应从 `context.account_fit`、`context.risk_limits` 和 `context.symbol_metadata` 推导仓位，不要写死超出账户/风控能力的金额。
+策略应从 `context.strategy_account_fit`、`context.risk_limits` 和 `context.symbol_metadata` 推导仓位，不要写死超出策略资金池/风控能力的金额。
 
 ## 10. margin 杠杆
 
