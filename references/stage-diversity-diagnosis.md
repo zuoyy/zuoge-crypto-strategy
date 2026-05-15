@@ -84,3 +84,42 @@ if side == "short" and btc_change > 1.5:
 2. early_trend 给正 bonus（如 +1.0），不要 0
 3. BTC regime gate 分级：-2% 以下全杀 long，-1% 到 -2% 降权
 4. 重排 `_stage()` 匹配顺序：窄阶段在前，宽阶段在后
+
+## 已应用修复 (2026-05-16)
+
+### 1. BTC regime 梯度惩罚
+
+替换 `discover()` 中的二元硬杀为 `_btc_regime_penalty(btc_change)`：
+
+```
+|BTC| ≤2%   → 0 惩罚（正常市场）
+|BTC| 2-5%  → 梯度惩罚 0→12（线性缩放：penalty=(|btc|-2)/3*12）
+|BTC| >5%  → None（极端行情，全部停信号）
+```
+
+惩罚应用于 setup_bias（降低候选分），而非硬杀。详参 `references/btc-regime-graduated-penalty.md`。
+
+### 2. sweep_reclaim 复活
+
+在 `_stage()` 最前面增加 sweep_reclaim 判断（优先于 reversal 和 continuation）：
+
+- **Long sweep**: signed_change < -2.0 AND pos_1h < 0.25（超卖）AND book > 0.03（bullish flip）AND bias > -0.15
+- **Short sweep**: signed_change > 2.5 AND pos_1h > 0.75（超买）AND book < -0.03（bearish flip）AND bias < 0.15
+
+同步更新了：
+- add stage filter（`_trade_gate` 行 409-412）
+- time_stop dict（240min）
+- entry_plan（pullback_into_range trigger，已存在）
+- stage_bonus（+7 分，已存在）
+
+### 3. early_trend bonus 0→2
+
+`_stage_bonus` 中 `"early_trend": 0.0` → `2.0`，与 `trend_pressure_build` 持平。
+
+### 4. pullback_reaccept book 放宽
+
+`_stage()` 中 `directional_book >= 0.05` → `0.03`，与 expansion_continuation 对齐。
+
+### 5. reversal 阶段补 time_stop
+
+`_apply_stage_exits` 增加 `high_reversal_short` 和 `low_reversal_long` 的 time_stop（各 180min），之前缺失这两阶段导致回退到 default 480min。
