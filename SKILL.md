@@ -41,6 +41,14 @@ description: "用于编写、校验、回测并自动投递实时策略候选到
 4. 重复观察→调参直到信号量/胜率平衡
 5. **第三轮**（信号过多时收紧）：neutral_probe floor 82→85、stage floor 68→72、spread gate 25→20bps。只砍最弱尾巴，不碰结构性 gate。
 
+**第四轮（gate 微调 + 效率优化）：**
+- `breakout` structure_bias gate: 0.05 → 0.0（只要求不为负，释放 ~17% 拒绝）
+- `neutral_probe` score floor: 85 → 82（从 17% 拒绝中回收边缘信号）
+- 信号冷却 key 从 `symbol:side` 细化为 `symbol:side:setup_id`，不同 setup 不互锁
+- `trailing_stop` 激活从 1.0x → 1.5x stop 距离，利润多跑 50%
+
+**源头收紧 > gate 加码**：discover() 多放一个弱 candidate，context delta 每秒触发多次评估链。优先从源头砍弱 candidate（score floor、limit、动态 TTL），减少 context 评估总量。详见 [references/efficiency-funnel-source-quality.md](references/efficiency-funnel-source-quality.md)。
+
 ### ⚠️ 修改后必须提交
 
 **任何**对 skill 文件（SKILL.md、references/*、templates/*）的修改后，立即执行：
@@ -298,8 +306,9 @@ GROUP BY reason_code ORDER BY cnt DESC;
 - 生产运行时诊断：[references/production-runtime-diagnosis.md](references/production-runtime-diagnosis.md)
 - 动态杠杆计算：[references/leverage-dynamic-calculation.md](references/leverage-dynamic-calculation.md)
 - 持仓管理与加仓门禁：[references/position-management-add-gate.md](references/position-management-add-gate.md)
-- 仓位轮换：[references/position-rotation.md](references/position-rotation.md)
+- 仓位轮换（落袋为安）：[references/position-rotation.md](references/position-rotation.md)
 - 动态下单金额封顶：[references/max-order-notional-dynamic.md](references/max-order-notional-dynamic.md)
-- 加仓预算联动：[references/dynamic-add-budget-linkage.md](references/dynamic-add-budget-linkage.md)
+- 加仓预算动态联动：[references/dynamic-add-budget-linkage.md](references/dynamic-add-budget-linkage.md)
+- 效率漏斗（源头质量）：[references/efficiency-funnel-source-quality.md](references/efficiency-funnel-source-quality.md)
 - 效率漏斗源头质量：[references/efficiency-funnel-source-quality.md](references/efficiency-funnel-source-quality.md)
 - 模板：[templates/dynamic_strategy.py](templates/dynamic_strategy.py)
