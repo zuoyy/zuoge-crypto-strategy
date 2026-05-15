@@ -37,6 +37,8 @@ slots_remaining ≤ 0        # 策略满仓，无空余 slot
 2. 信号列表返回 `[rotation_close_signal, new_open_signal]`
 3. CLOSE 信号的 `intent = CLOSE_<side>`，`symbol` 覆写为目标 symbol
 
+⚠️ **关键要求**：`max_signals_per_candidate` 必须 ≥ 2，否则框架 `[:signal_limit]` 会截断双信号列表，丢弃开仓信号。manifest 中设置 `"max_signals_per_candidate": 2`。
+
 ## 安全边界
 
 | 规则 | 说明 |
@@ -46,6 +48,54 @@ slots_remaining ≤ 0        # 策略满仓，无空余 slot
 | 不替己 | 同 symbol 走 add gate |
 | 不 flooding | `_fetch_strategy_positions()` 有 15s TTL 缓存 |
 | API 故障容错 | `_fetch_strategy_positions()` 失败时返回过期缓存，不阻塞信号 |
+| manifest 双信号 | `max_signals_per_candidate: 2` 防止轮换截断 |
+
+## 已知陷阱
+
+### 1. cross-symbol price_ref 错位（严重）
+
+`_build_rotation_close` 过去调用 `signal_envelope(context=当前context)`，但当前 context 是**新信号 symbol** 的数据（如 COINUSDT），而平仓信号需要关闭**另一个 symbol**（如 GTCUSDT）。
+
+**后果**：`signal_envelope` 从当前 context 计算 `price_ref`（COINUSDT 价格），Go 后端收到后比对 GTCUSDT 市价 → `price_deviation_exceeded` 拒绝。决策日志有 ROTATE，但 signals 表无对应记录。
+
+**修复**：不使用 `signal_envelope`，手动构建平仓信号 dict，`price_ref` 从 `pos.mark_price`（positions API 返回的持仓市价）取值，fallback `pos.avg_entry_price`。
+
+### 2. signal_limit 截断
+
+`realitime_main.py` 的 `_remaining_signal_limit` 对所有信号列表做 `[:signal_limit]` 截断。当 `max_signals_per_candidate=1` 时，`[rotation_close, main_signal]` → 只发第一个（close），开仓信号被丢弃。
+
+**修复**：manifest 设置 `max_signals_per_candidate: 2`。
+
+### 3. 排查步骤
+
+当怀疑轮换不工作时，按以下链路逐级验证：
+
+```
+decision_logs (ROTATE?) → signals 表 (close signal?) → strategy_signal_rejects (price_deviation?) → position_plan_runtimes (持仓仍在?)
+```
+
+```sql
+-- 1. 查是否有轮换决策
+SELECT reason, created_at FROM strategy_decision_logs
+WHERE reason LIKE '%ROTATE%' ORDER BY created_at DESC LIMIT 5;
+
+-- 2. 查平仓信号是否入库
+SELECT signal_id, symbol, status, signal_reason FROM signals
+WHERE strategy_id = 'workflow_distilled_funnel'
+  AND (signal_reason LIKE '%rotation%' OR signal_reason LIKE '%close%')
+ORDER BY created_at DESC LIMIT 10;
+
+-- 3. 平仓信号被拒绝的原因（重点关注 price_deviation_exceeded）
+SELECT reason_code, reason, rejected_at, signal_id
+FROM strategy_signal_rejects
+WHERE rejected_at > NOW() - INTERVAL '4 hours'
+  AND reason_code = 'price_deviation_exceeded'
+ORDER BY rejected_at DESC LIMIT 10;
+
+-- 4. 目标持仓是否仍在
+SELECT symbol, runtime_status, remaining_position_ratio
+FROM position_plan_runtimes WHERE runtime_status = 'active';
+```
 
 ## 代码位置
 
