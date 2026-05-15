@@ -47,6 +47,8 @@ description: "用于编写、校验、回测并自动投递实时策略候选到
 - 信号冷却 key 从 `symbol:side` 细化为 `symbol:side:setup_id`，不同 setup 不互锁
 - `trailing_stop` 激活从 1.0x → 1.5x stop 距离，利润多跑 50%
 
+**第五轮（gate 分拆 + 时间放宽）：** 当 `breakout_without_1h_4h_confirmation` 仍占 17%+ 拒绝时，把 gate 按 stage 分拆——`accepted_breakout` 保持 bias≥0，`expansion_continuation` 放宽到 bias≥-0.08。book gate 从 ±0.03 扩到 ±0.05（回收 21% 拒绝）。加仓浮盈门槛 1.5%→1.0%。信号过期多时：signal expire_ms 60s→90s + entry expire 45s→60s。关键原则：**不同 stage 不同 gate 阈值**，不要一刀切。
+
 **源头收紧 > gate 加码**：discover() 多放一个弱 candidate，context delta 每秒触发多次评估链。优先从源头砍弱 candidate（score floor、limit、动态 TTL），减少 context 评估总量。详见 [references/efficiency-funnel-source-quality.md](references/efficiency-funnel-source-quality.md)。
 
 ### ⚠️ 修改后必须提交

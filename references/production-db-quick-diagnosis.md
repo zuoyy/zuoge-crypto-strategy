@@ -8,6 +8,18 @@
 PGPASSWORD="" psql -h localhost -U zuo -d crypto_trader
 ```
 
+### ⚠️ DATABASE_URL 不可见时的 fallback
+
+生产进程的 `DATABASE_URL` 可能无法通过 `ps eww` 或 plist 发现（macOS launchd 环境隔离）。fallback 路径：
+
+- **生产库**：`postgres://zuo:@localhost:5432/crypto_trader?sslmode=disable`
+- **开发库**：`postgres://zuo:@localhost:5432/crypto_trader_dev?sslmode=disable`（`.env.dev` 中配置）
+
+直接 `psql` 连接免认证（本地 socket），比 `psql "$DATABASE_URL"` 更可靠：
+```bash
+psql -h localhost -U zuo -d crypto_trader -c "SELECT ..."
+```
+
 ## 诊断 SQL
 
 ### 1. 信号状态总盘
