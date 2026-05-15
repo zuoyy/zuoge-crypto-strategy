@@ -468,6 +468,8 @@ ingress 会用这些实时字段做最后防线：
 - `min_reward_risk` 使用第一个止盈目标和初始止损计算。
 - `quote_staleness_seconds` 约束可接受报价年龄，必须大于等于 0。高频信号建议 5-30 秒。
 
+⚠️ **close 信号必须带 execution_constraints**：即使 `stop_loss.mode=none`、`take_profit.mode=none`，close 信号（intent=CLOSE_LONG/CLOSE_SHORT）仍然需要 `execution_constraints.max_slippage_pct > 0`，否则 Go 后端会在 signal validation 阶段拒绝 `"price protection is required via acceptable_range or execution_constraints.max_slippage_pct"`。market close 信号建议 `max_slippage_pct: "0.003"`。
+
 ## 13. 推荐策略代码模式
 
 ```python

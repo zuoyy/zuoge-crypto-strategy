@@ -304,6 +304,7 @@ GROUP BY reason_code ORDER BY cnt DESC;
 - **仓位轮换**：满仓时高质量新信号（score≥85）可主动止盈最弱浮盈持仓（0.5%~2.5% PnL，全大盈时取最弱），释放 slot 落袋为安。调用 `GET /api/v1/agent/positions` 获取全策略持仓做全局比较，15s TTL 缓存不 flooding。⚠️ close 信号必须手动构建（不用 signal_envelope 以免 cross-symbol price_ref 错位），且 manifest 需 `max_signals_per_candidate: 2` 防止双信号截断。排查链路见 [references/position-rotation.md](references/position-rotation.md)。
 - **止损波动率**：双源波动率代理（24h change + 1h trend），替代单源 24h change。短时剧烈波动的币自动放宽止损，已冷却的币自动收紧。详见 [references/stop-formula-dual-volatility.md](references/stop-formula-dual-volatility.md)。
 - **阶段多样性**：加 `early_trend` 过渡阶段解决全 short 单一信号问题 + long book gate 放宽 ±0.03 中性区。详见 [references/stage-classification-diversity.md](references/stage-classification-diversity.md)。
+- **阶段诊断**：信号阶段分布分析、死代码检查（sweep_reclaim）、BTC regime gate 影响、stage_bonus 配置。详见 [references/stage-diversity-diagnosis.md](references/stage-diversity-diagnosis.md)。
 
 ## 参考
 

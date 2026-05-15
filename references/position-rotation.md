@@ -66,7 +66,21 @@ slots_remaining ≤ 0        # 策略满仓，无空余 slot
 
 **修复**：manifest 设置 `max_signals_per_candidate: 2`。
 
-### 3. 排查步骤
+### 3. execution_constraints 缺失
+
+market close 信号（stop_loss.mode=none, take_profit.mode=none）**仍然需要** `execution_constraints.max_slippage_pct`，否则 Go backend 拒绝：
+> `"price protection is required via acceptable_range or execution_constraints.max_slippage_pct"`
+
+手动构建的 rotation close 信号必须包含：
+```json
+"execution_constraints": {
+    "max_slippage_pct": "0.003",
+    "min_reward_risk": "1.0",
+    "quote_staleness_seconds": 20
+}
+```
+
+### 4. 排查步骤
 
 当怀疑轮换不工作时，按以下链路逐级验证：
 
