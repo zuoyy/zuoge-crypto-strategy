@@ -161,6 +161,20 @@ Path(__file__).resolve().parents[1] / "strategies" / "enabled"
 ```
 `__file__` 是 `strategy_manager.py` 的实际路径，Python 导入时已解析 symlink → 指向 release 目录内的 `strategy/strategies/enabled/`。所以**真实加载路径是 release 目录内的 enabled**，不是顶层的 `/opt/homebrew/var/crypto-trader/strategies/enabled/`。但两边 manifest 都要更新以保持一致。
 
+### ⚠️ 常见陷阱：新 release 部署后策略消失
+
+当 `deploy-current` 或系统自动创建新 release 目录时（如 `20260515-224627` → `20260516-000638`），新 release 的 `strategy/strategies/enabled/` 是空的。策略文件必须重新同步到新 release 目录：
+
+```bash
+RELEASE=$(readlink /opt/homebrew/var/crypto-trader/current | xargs basename)
+DEST="/opt/homebrew/var/crypto-trader/releases/$RELEASE/strategy/strategies/enabled"
+mkdir -p "$DEST"
+cp /opt/homebrew/var/crypto-trader/strategies/enabled/workflow_distilled_funnel_0_1_0.py "$DEST/"
+cp /opt/homebrew/var/crypto-trader/strategies/enabled/workflow_distilled_funnel_0_1_0.manifest.json "$DEST/"
+```
+
+**症状：** `Handles: 0, Errors: 0`（无报错但无策略加载）→ enabled 目录为空。
+
 ### 如何快速诊断"策略未加载"
 
 ```bash
@@ -285,7 +299,9 @@ GROUP BY reason_code ORDER BY cnt DESC;
 - **下单金额**：`desired_notional = min(risk/stop, equity × max_order_pct)`，其中 `max_order_pct = risk_limits.max_order_notional_pct / 100`。后端修改后策略自动跟随，无需改代码。详见 [references/max-order-notional-dynamic.md](references/max-order-notional-dynamic.md)。
 - **加仓**：专业金字塔加仓 — 7 层 gate（浮盈≥1.5%、趋势续、book 撑、回调入场、阶段过滤、敞口检查、亏损保护）+ 4 级冷却分层（90/180/240/120min），budget联动 `max_add_count`（1/(1+n)递减），参数从 backend 动态读取不写死。详见 [references/position-management-add-gate.md](references/position-management-add-gate.md)。预算联动细节见 [references/dynamic-add-budget-linkage.md](references/dynamic-add-budget-linkage.md)。
 - **效率漏斗**：discover() 源头 candidate 质量直接决定 context 评估量（50万+/h decision logs）。收紧源头（score floor↑、candidate limit↓、TTL动态化、方向预筛选）比加 gate 更有效。详见 [references/efficiency-funnel-source-quality.md](references/efficiency-funnel-source-quality.md)。
-- **仓位轮换**：满仓时高质量新信号（score≥85）可主动止盈最弱浮盈持仓（0.5%~2.5% PnL）释放 slot，落袋为安。调用 `GET /api/v1/agent/positions` 获取全策略持仓做全局比较，15s TTL 缓存不 flooding。详见 [references/position-rotation.md](references/position-rotation.md)。
+- **仓位轮换**：满仓时高质量新信号（score≥85）可主动止盈最弱浮盈持仓（0.5%~2.5% PnL，全大盈时取最弱），释放 slot 落袋为安。调用 `GET /api/v1/agent/positions` 获取全策略持仓做全局比较，15s TTL 缓存不 flooding。详见 [references/position-rotation.md](references/position-rotation.md)。
+- **止损波动率**：双源波动率代理（24h change + 1h trend），替代单源 24h change。短时剧烈波动的币自动放宽止损，已冷却的币自动收紧。详见 [references/stop-formula-dual-volatility.md](references/stop-formula-dual-volatility.md)。
+- **阶段多样性**：加 `early_trend` 过渡阶段解决全 short 单一信号问题 + long book gate 放宽 ±0.03 中性区。详见 [references/stage-classification-diversity.md](references/stage-classification-diversity.md)。
 
 ## 参考
 
@@ -309,6 +325,8 @@ GROUP BY reason_code ORDER BY cnt DESC;
 - 仓位轮换（落袋为安）：[references/position-rotation.md](references/position-rotation.md)
 - 动态下单金额封顶：[references/max-order-notional-dynamic.md](references/max-order-notional-dynamic.md)
 - 加仓预算动态联动：[references/dynamic-add-budget-linkage.md](references/dynamic-add-budget-linkage.md)
+- 仓位轮换（落袋为安）：[references/position-rotation.md](references/position-rotation.md)
 - 效率漏斗（源头质量）：[references/efficiency-funnel-source-quality.md](references/efficiency-funnel-source-quality.md)
-- 效率漏斗源头质量：[references/efficiency-funnel-source-quality.md](references/efficiency-funnel-source-quality.md)
+- 止损双源波动率：[references/stop-formula-dual-volatility.md](references/stop-formula-dual-volatility.md)
+- 阶段分类多样性：[references/stage-classification-diversity.md](references/stage-classification-diversity.md)
 - 模板：[templates/dynamic_strategy.py](templates/dynamic_strategy.py)
