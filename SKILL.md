@@ -48,7 +48,14 @@ description: "用于编写、校验、回测并自动投递实时策略候选到
 cd /Users/zuo/.hermes/skills/zuoge-crypto-strategy && git add -A && git commit -m "skill: <简述>" && git push
 ```
 
-不要等用户提醒。策略代码修改走项目 repo（`/Users/zuo/Documents/projects/crypto-trader`），同样修改后立即提交推送。生产部署后也要提交。
+不要等用户提醒。
+
+### ⚠️ Git 权限边界
+
+- **✅ 可以提交推送**：`/Users/zuo/.hermes/skills/zuoge-crypto-strategy`（本 skill 仓库）
+- **🚫 禁止提交推送**：`/Users/zuo/Documents/projects/crypto-trader/`（用户项目仓库，由用户自行管理 git）
+
+策略代码可以读取、编辑，但不得 `git add/commit/push`。
 
 ## 可移植安装
 
@@ -265,6 +272,7 @@ GROUP BY reason_code ORDER BY cnt DESC;
 - 策略胜率诊断与优化：[references/strategy-optimization-playbook.md](references/strategy-optimization-playbook.md)
 - 价格量化陷阱：[references/price-quantization-pitfalls.md](references/price-quantization-pitfalls.md)
 - risk_budget sizing 瓶颈：[references/risk-budget-sizing-pitfall.md](references/risk-budget-sizing-pitfall.md)
+- risk_budget 公式倒置：[references/risk-budget-formula-inversion.md](references/risk-budget-formula-inversion.md)
 - close_ratio 尾盘残留：[references/close-ratio-ladder-tail.md](references/close-ratio-ladder-tail.md)
 - change_bonus 衰减模式：[references/change-bonus-pattern.md](references/change-bonus-pattern.md)
 - Manifest hash 陷阱：[references/manifest-hash-silent-failure.md](references/manifest-hash-silent-failure.md)

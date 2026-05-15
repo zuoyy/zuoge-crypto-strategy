@@ -30,9 +30,20 @@ notional = max(equity * budget_pct / 100.0, min_notional)  # $50.17
 
 这个值在 `target_notional` 模式下合理（不开杠杆），但切到 `risk_budget` 后，Go 端算出百倍的杠杆化 notional，又被这个 $50 压回去。
 
-## 修复
+## 修复（2026-05-15 最终版）
 
-在策略的 `_apply_risk_budget_sizing()` 中，切到 `risk_budget` 后**必须重新计算 `max_notional`**：
+**根因修复**：`risk_pct` 应从"名义金额占比"改为"风险金额占比"，修复在 `_apply_risk_budget_sizing()`：
+
+```python
+# 修复前（错误）
+desired_notional = allocated_equity * risk_pct / 100.0    # $50 ← risk_pct 当 notional 用
+
+# 修复后（正确）
+target_risk_amount = allocated_equity * risk_pct / 100.0   # $50 = 1% 风险
+desired_notional = target_risk_amount / stop_pct            # $50 / 0.02 = $2,500
+```
+
+`desired_notional` 变大了 50 倍，后续 `max_notional = min(caps)` 由 `effective_order_cap`（~$1,500）主导，不再是 $50 瓶颈。
 
 ```python
 def _apply_risk_budget_sizing(self, trade_params, context, state, risk_pct):
