@@ -131,8 +131,8 @@
         "type": "MicrostructureFeatures|TradeFlowFeatures|KlineFeatures|DerivativeFeatures"
       },
       {
-        "meaning": "symbol fit against account risk and slots",
-        "name": "account_fit",
+        "meaning": "symbol fit against strategy risk budget and slots",
+        "name": "strategy_account_fit",
         "type": "StrategyAccountFit"
       },
       {

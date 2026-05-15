@@ -266,7 +266,7 @@ def build_signals_from_context(self, context: dict) -> list[dict]:
    - **默认不允许加仓**。加仓只在满足全部条件时开启：score ≥ 80、PnL ≥ 0（不在亏损中）、stage 不为 neutral_probe。
    - 加仓时检查：`symbol_exposure_pct < max_symbol_exposure_pct * 0.75`，否则拒绝 `same_side_already_near_max_exposure`
    - 浮亏不超过 notional 的 3%，否则拒绝 `do_not_add_to_losing_position`
-   - `_risk_budget_pct()` 将 budget 减半（`* 0.5`），`_account_gate()` 地板从 0.25 降到 0.15
+   - `_risk_budget_pct()` 将 budget 减半（`* 0.5`），`_strategy_budget_gate()` 地板从 0.25 降到 0.15
    - `position_management.allow_add_position = true`，`max_add_count = 1`，`cooldown` = **120 分钟**（2026-05-15 从 15 分钟提升，防止"刚开仓就加仓"和频繁累加）
 
 3. **反向持仓**（position.side != signal.side）：
@@ -432,14 +432,14 @@ nats pub settings.changed '{"version":1}'
 
 或直接 kill & 自动重启 worker 进程（KeepAlive 模式下 launchd 自动拉起）。
 
-### 6d. ⚠️ `account_risk_budget_missing` — overlay 失败导致全场 NO_TRADE
+### 6d. ⚠️ `strategy_risk_budget_missing` — overlay 失败导致全场 NO_TRADE
 
-当 strategy context overlay 调用 Go 后端 `/api/v1/agent/strategy/context/{symbol}?strategy_id=<strategy_id>` 失败时（日志出现 `strategy_context_overlay_failed`），`context.strategy_account_fit` 为空，策略的 `_account_gate()` 读到 `remaining_symbol_budget_pct=0` → 返回 False → **所有信号全部 NO_TRADE**，策略完全停摆。
+当 strategy context overlay 调用 Go 后端 `/api/v1/agent/strategy/context/{symbol}?strategy_id=<strategy_id>` 失败时（日志出现 `strategy_context_overlay_failed`），`context.strategy_account_fit` 为空，策略的 `_strategy_budget_gate()` 读到 `remaining_symbol_budget_pct=0` → 返回 False → **所有信号全部 NO_TRADE**，策略完全停摆。
 
 **最快确认方式**（绕过 API 直接查生产 DB）：
 
 ```sql
--- 看最近 decision logs 是否有大量 account_risk_budget_missing
+-- 看最近 decision logs 是否有大量 strategy_risk_budget_missing
 SELECT decision, reason, symbol,
        to_char(created_at AT TIME ZONE 'Asia/Shanghai', 'MM-DD HH24:MI') as cst
 FROM strategy_decision_logs
@@ -467,11 +467,11 @@ ORDER BY created_at DESC LIMIT 20;
 - **只查 signals 表**：信号可能全进了 `strategy_signal_rejects` 而 `signals` 表为空。两表都要查。
 - **忽略 NATS subject 分布**：`nats stream subjects` 能直接看出 signal 和 dead letter 的比例，是判断"全被拒"还是"根本没到"的最快方式。
 - **signals 表全 expired 不一定是没执行**：fills 表可能有实际成交（通过 NATS→ingress→execution 路径），需要联查 `fills` + `position_plan_runtimes` 才能还原真实交易时间线。不要只看 signals.status=expired 就断定无交易。
-- **账户满仓死锁**：当 `remaining_total_budget=0` 且无 candidate 时，策略不发 CLOSE 信号（架构限制），导致持仓永远无法通过策略自动平仓。确诊：查 `strategy_decision_logs` 是否全部 `account_risk_budget_missing`；查 portfolio snapshot 中 `remaining_total_budget_pct` 和 `total_exposure_pct`。解药：手动平仓释放预算。（长期：加持仓监控订阅，即使无 candidate 也定期检查持仓退出条件。）
+- **策略预算满仓死锁**：当 `remaining_total_budget=0` 且无 candidate 时，策略不发 CLOSE 信号（架构限制），导致持仓永远无法通过策略自动平仓。确诊：查 `strategy_decision_logs` 是否全部 `strategy_risk_budget_missing`；查 strategy context 中 `strategy_account_fit.remaining_total_budget_pct` 和 `strategy_account_fit.total_exposure_pct`。解药：手动平仓释放预算。（长期：加持仓监控订阅，即使无 candidate 也定期检查持仓退出条件。）
 
 ### 6f. ⚠️ SlowConsumer 淹没事件循环 — wildfire 订阅
 
-策略订阅 `strategy.context.delta.*`（通配符）会收到 **所有币种**的 context 更新（实测 43+ 个 subject），而非仅 candidate 币种。Python 事件循环处理不过来 → NATS SlowConsumer（日志 `nats.errors.SlowConsumerError`，stderr 可积累数百万条）→ HTTP overlay 调用被阻塞超时 → `account_risk_budget_missing`。
+策略订阅 `strategy.context.delta.*`（通配符）会收到 **所有币种**的 context 更新（实测 43+ 个 subject），而非仅 candidate 币种。Python 事件循环处理不过来 → NATS SlowConsumer（日志 `nats.errors.SlowConsumerError`，stderr 可积累数百万条）→ HTTP overlay 调用被阻塞超时 → `strategy_risk_budget_missing`。
 
 **确诊**：
 ```bash

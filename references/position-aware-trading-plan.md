@@ -31,9 +31,9 @@ GET /api/v1/agent/positions?strategy_id=<strategy_id>
 
 ```python
 def _trade_gate(self, state, context, position):
-    # 账户预算检查
-    account_ok, reason = self._account_gate(context, position, state)
-    if not account_ok:
+    # 策略预算检查
+    budget_ok, reason = self._strategy_budget_gate(context, position, state)
+    if not budget_ok:
         return False, reason
 
     # 持仓冲突

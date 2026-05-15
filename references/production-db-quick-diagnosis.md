@@ -33,7 +33,7 @@ FROM strategy_decision_logs
 ORDER BY created_at DESC LIMIT 40;
 ```
 
-**最危险的信号**：如果最近 40 条全是 `NO_TRADE | account_risk_budget_missing`，说明账户已满仓或 overlay 挂了。
+**最危险的信号**：如果最近 40 条全是 `NO_TRADE | strategy_risk_budget_missing`，说明策略预算已满或 overlay 挂了。
 
 ### 4. 实际成交（fills）——还原真实交易时间线
 
@@ -75,11 +75,11 @@ FROM position_plan_runtimes WHERE runtime_status IN ('active', 'cooldown');
 
 ```bash
 export $(grep -v '^#' /opt/homebrew/etc/crypto-trader/strategy.env | grep -v '^$' | xargs)
-curl -s "$STRATEGY_CONTEXT_API_URL/api/v1/agent/strategy/context/DUSKUSDT" \
+curl -s "$STRATEGY_CONTEXT_API_URL/api/v1/agent/strategy/context/DUSKUSDT?strategy_id=$STRATEGY_ID" \
   -H "Authorization: Bearer $AGENT_API_KEY" | python3 -m json.tool
 ```
 
-关注 `account_fit.remaining_total_budget_pct` — 如果是 `"0"` 则账户已满。
+关注 `strategy_account_fit.remaining_total_budget_pct` — 如果是 `"0"` 则该策略资金池已满。
 
 ## 诊断决策树
 
@@ -96,9 +96,9 @@ curl -s "$STRATEGY_CONTEXT_API_URL/api/v1/agent/strategy/context/DUSKUSDT" \
   │           └─ signal_validation_failed → 查具体 signal
   │
 2. 查 strategy_decision_logs → 全是 NO_TRADE？
-  ├─ account_risk_budget_missing → 查 overlay 连通性 + 账户状态
-  │   ├─ overlay 正常 → 账户已满（查 account_fit）
-  │   │   ├─ remaining_total_budget_pct=0 → 账户死锁
+  ├─ strategy_risk_budget_missing → 查 overlay 连通性 + 策略资金池状态
+  │   ├─ overlay 正常 → 策略预算已满（查 strategy_account_fit）
+  │   │   ├─ remaining_total_budget_pct=0 → 策略预算死锁
   │   │   │   ├─ 查 position_plan_runtimes 看哪些持仓占着
   │   │   │   └─ 查 fills 看是否"刚开仓就加仓"导致仓位翻倍
   │   │   └─ 有 budget → 其他原因
@@ -129,6 +129,6 @@ grep 'strategy_context_overlay_failed' /opt/homebrew/var/crypto-trader/logs/real
 
 ```bash
 export $(grep -v '^#' /opt/homebrew/etc/crypto-trader/strategy.env | grep -v '^$' | xargs)
-curl -s "$STRATEGY_CONTEXT_API_URL/api/v1/agent/strategy/context/GWEIUSDT" \
-  -H "Authorization: Bearer $AGENT_API_KEY" | python3 -c "import json,sys; d=json.load(sys.stdin); print('account_fit:', d.get('item',d).get('account_fit',{}))"
+curl -s "$STRATEGY_CONTEXT_API_URL/api/v1/agent/strategy/context/GWEIUSDT?strategy_id=$STRATEGY_ID" \
+  -H "Authorization: Bearer $AGENT_API_KEY" | python3 -c "import json,sys; d=json.load(sys.stdin); item=d.get('item',d); print('strategy_account_fit:', item.get('strategy_account_fit',{}))"
 ```

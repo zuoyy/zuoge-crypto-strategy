@@ -36,7 +36,8 @@ notional = max(equity * budget_pct / 100.0, min_notional)  # $50.17
 
 ```python
 def _apply_risk_budget_sizing(self, trade_params, context, state, risk_pct):
-    equity = number(account_fit.get("account_equity"), 1000.0)
+    strategy_fit = context.get("strategy_account_fit") or {}
+    equity = number(strategy_fit.get("account_equity"), 1000.0)
     risk_amount = equity * risk_pct / 100.0
     sizing = trade_params.get("sizing") or {}
     sizing["mode"] = "risk_budget"
