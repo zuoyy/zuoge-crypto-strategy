@@ -21,6 +21,18 @@ description: "用于编写、校验、回测并自动投递实时策略候选到
 
 调用 API 时只能使用 `/api/v1/agent/...` 路由。不要使用网页控制台 cookie，不要调用普通 `/api/v1/...` 路由。
 
+### 🔴 源码 vs 生产：绝对禁止直接改生产部署文件
+
+| 可以改 | 禁止改（除非后备流程） |
+|--------|------------------------|
+| `$ZUOGE_CRYPTO_PROJECT_ROOT/strategy/strategies/candidates/*.py` | `/opt/homebrew/var/crypto-trader/strategies/enabled/*.py` |
+| 项目根目录下所有源码 | `/opt/homebrew/var/crypto-trader/strategies/candidates/*.py` |
+| | `/opt/homebrew/var/crypto-trader/releases/*/strategy/**/*.py` |
+
+**规则：所有策略代码修改只发生在项目源码根目录。** 生产部署目录（`/opt/homebrew/var/crypto-trader/`）只在标准管线（`crypto-skill candidate publish` 或 `deploy-current`）或「生产直接修改策略文件的完整步骤」后备流程中由工具自动写入，**永远不手动编辑**。
+
+常见犯规场景：看到 `/opt/homebrew/var/crypto-trader/strategies/candidates/` 下有同名文件就直接改——这是生产部署镜像，不是源码。真正的源码在 `$ZUOGE_CRYPTO_PROJECT_ROOT`。
+
 ## 策略胜率优化方法论
 
 ⚠️ **先修评分公式，再调 gate 阈值。** 不要只调 `neutral_probe` score floor 或 `directional_book` gate——先检查评分公式本身是否奖励了错误行为。
@@ -80,7 +92,9 @@ cd /Users/zuo/.hermes/skills/zuoge-crypto-strategy && git add -A && git commit -
 
 ## 工作流
 
-> **🔴 硬规则：所有策略修改必须走此工作流。** 不要跳过步骤直接修改生产 enabled 文件。若已修改的文件已是生产策略文件，也必须回填到候选目录、补走 check/test/backtest。
+> **🔴 硬规则 1：所有策略修改必须走此工作流。** 不要跳过步骤直接修改生产 enabled 文件。若已修改的文件已是生产策略文件，也必须回填到候选目录、补走 check/test/backtest。
+> 
+> **🔴 硬规则 2：永远只编辑项目源码根目录下的文件。** 源码在 `$ZUOGE_CRYPTO_PROJECT_ROOT/strategy/strategies/candidates/`。`/opt/homebrew/var/crypto-trader/` 下的同名文件是生产部署镜像——管线下游产物，不手动编辑。
 
 在项目根目录内工作：
 
@@ -320,6 +334,7 @@ GROUP BY reason_code ORDER BY cnt DESC;
 - 持仓感知交易计划：[references/position-aware-trading-plan.md](references/position-aware-trading-plan.md)
 - 生产 DB 快速诊断：[references/production-db-quick-diagnosis.md](references/production-db-quick-diagnosis.md)
 - 策略胜率诊断与优化：[references/strategy-optimization-playbook.md](references/strategy-optimization-playbook.md)
+- 胜率分析 SQL 全集：[references/win-rate-analysis-queries.md](references/win-rate-analysis-queries.md)
 - 价格量化陷阱：[references/price-quantization-pitfalls.md](references/price-quantization-pitfalls.md)
 - risk_budget sizing 瓶颈：[references/risk-budget-sizing-pitfall.md](references/risk-budget-sizing-pitfall.md)
 - risk_budget 公式倒置：[references/risk-budget-formula-inversion.md](references/risk-budget-formula-inversion.md)

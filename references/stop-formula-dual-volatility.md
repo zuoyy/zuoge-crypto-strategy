@@ -117,3 +117,47 @@ WHERE f.action_id IS NULL AND f.realized_pnl < 0
 ## 风险
 
 放宽止损范围意味着单笔最大亏损可能增大。配合 `risk_budget_pct` 的动态递减（加仓 budget × 0.5~0.25）和 `max_order_notional_pct` 封顶，总风险可控。
+
+## ⚠️ 连锁效应：止损放宽 → 仓位缩小 → 需提 risk_pct（2026-05-17）
+
+### 现象
+
+止损分母 850→200 后，stop_pct 从 ~1% 扩到 ~3%，但 `risk_pct`（单笔风险预算）未同步调整。下单公式：
+
+```
+notional = (equity × risk_pct) / stop_pct
+```
+
+`stop_pct` 放大 3 倍 → `notional` 缩小到 1/3。$5000 账户实际仓位从 ~$5000 缩到 ~$1667。
+
+### 诊断方法
+
+先查后端实际风险参数，不要假设默认值（代码里的 40 是 fallback）：
+
+```sql
+SELECT * FROM strategy_risk_allocations WHERE strategy_id = 'workflow_distilled_funnel';
+```
+
+本例中 `max_order_notional_pct = 100%`（天花板 $5000 根本没碰到），瓶颈是策略自己的 `risk_pct`。
+
+### 修复
+
+```python
+# 旧（止损窄时够用）
+risk_pct = 1.0 if score < 82 else 1.5
+
+# 新（止损放宽后补偿）
+risk_pct = 2.5 if score < 82 else 3.5
+```
+
+| 场景 | 旧 stop | 新 stop | 旧 risk | 新 risk | 旧 notional | 新 notional |
+|------|---------|---------|---------|---------|-------------|-------------|
+| $5000, vol=3% | 1.05% | 3.0% | 1.0% | 2.5% | $4762 | $4167 |
+| $5000, vol=5% | 1.29% | 4.0% | 1.0% | 2.5% | $3876 | $3125 |
+| $5000, vol=8% | 1.64% | 5.5% | 1.5% | 3.5% | $4573 | $3182 |
+
+实际仓位由后端 `max_order_notional_pct` 天花板兜底。
+
+### 原则
+
+**改 stop 公式后必须检查 notional 是否合理。** 止损和 risk_pct 是联动的——一个变宽，另一个就要提上去，否则仓位缩水。两个参数一起调。

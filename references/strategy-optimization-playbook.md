@@ -12,7 +12,25 @@
 5. **Step 5**: 加缺失的过滤器（超买/超卖、大趋势确认、市场 regime）
 6. **Step 6**: ⚠️ **查止损公式**——提取 `signal.payload_json` 中 `stop_price` 与 `price_ref` 的距离，若 < 1.5% 且杠杆 > 10x → 止损公式分母太大，修复后再调其他 gate。
 
-## 诊断四步法
+## 诊断四步法 + 第七步
+
+### Step 7: ⚠️ 改止损后必查 notional 联动
+
+修改止损公式后，必须验证 notional 是否合理：
+
+```python
+# notional 公式
+desired_notional = (equity × risk_pct) / stop_pct
+#                  ↑ 如果 stop_pct 放大 2-3 倍，notional 同比缩小
+```
+
+检查项：
+1. 用实际参数手算一笔预期 notional
+2. 查后端 `strategy_risk_allocations.max_order_notional_pct`——这是天花板，不是瓶颈根因
+3. 若 notional 显著缩小，提 `risk_pct` 补偿，不要改后端风控参数
+4. 两个参数联动调：stop ↑ → risk_pct ↑
+
+
 
 ### Step 1: 拉总盘
 
@@ -252,7 +270,26 @@ desired_notional   = target_risk_amount / stop_pct  # $2,500
 | 实际风险 | $1 (0.02%) | ~$30 (0.6%) |
 | 保证金 (11x) | $1–$5 | ~$136 |
 
-## 第七轮：Manifest Hash 静默失败（2026-05-15）
+## 第八次优化：止损放宽连锁效应 — risk_pct 补偿（2026-05-17）
+
+### 现象
+
+止损分母 850→200 修复后，notional 缩水 67%（$5000→$1667），仓位过小。
+
+### 根因
+
+`notional = risk_amount / stop_pct`——stop_pct 放大 3 倍，risk_pct 未动，notional 同比缩小。这不是后端风控天花板的问题（实际 `max_order_notional_pct=100%`），是策略自己的 `risk_pct` 太低。
+
+### 修复
+
+| 参数 | 旧值 | 新值 | 理由 |
+|------|------|------|------|
+| `risk_pct` (score<82) | 1.0 | **2.5** | 止损放宽 3x，risk 提 2.5x 补偿 |
+| `risk_pct` (score≥82) | 1.5 | **3.5** | 同比例 |
+
+### 原则
+
+**改 stop 后必须查 notional，stop 和 risk_pct 联动调。** 详见 [references/stop-formula-dual-volatility.md](references/stop-formula-dual-volatility.md) 连锁效应章节。
 
 ### 发现
 
@@ -281,7 +318,78 @@ desired_notional   = target_risk_amount / stop_pct  # $2,500
 
 核心门控（book 方向、discover 天花板、止损）是**不可撼动的底线**。
 
-## 通用诊断语句
+## 第八轮：止损公式修复 + trend_pressure_build 收紧 + 对称追空 gate（2026-05-17）
+
+### 现象
+
+用户要求分析胜率/盈亏比。25 笔已平仓交易：9 赢 11 亏 5 平，胜率 36%，盈亏比 1.61:1，净利 +$103.55。
+
+### Step 0：拆分成交来源
+
+| 来源 | fills | 净盈亏 | 特征 |
+|------|-------|--------|------|
+| 策略主动平仓 | 101 | **+$171.67** | 17 赢 3 亏 |
+| 交易所止损 | 18 | **-$68.12** | 5 赢 13 亏 |
+
+策略自己平仓赚钱，**亏损全来自止损被扫**。
+
+### Step 1：按阶段拆分（核心发现）
+
+| 阶段 | 笔数 | 胜率 | 总盈亏 |
+|------|------|------|--------|
+| **expansion_continuation** | 11 | **63.6%** | **+$350.43** ✅ |
+| **trend_pressure_build** | 14 | **14.3%** | **-$246.87** ❌ |
+
+`trend_pressure_build` 14 笔中 13 笔是空单，2 赢 11 亏。这是所有亏损的根源。
+
+### Step 2：止损距离诊断
+
+10 笔亏损单实测：
+
+| 币种 | 入场价 | 止损价 | **止损距离** |
+|------|--------|--------|-------------|
+| GTCUSDT | $0.0995 | $0.0993 | **0.22%** |
+| SKYAIUSDT | $0.3200 | $0.3200 | **≈0%** |
+| SQDUSDT | $0.0382 | $0.0382 | **≈0%** |
+| BRETTUSDT | $0.0082 | $0.0082 | **≈0%** |
+| XANUSDT | $0.0099 | $0.0099 | **≈0%** |
+| MEGAUSDT | $0.0928 | $0.0928 | **≈0%** |
+
+规律：低价币（<$1）止损距离 0-0.2%。分母 850 对低波动币产出 0.7-1.0% stop，配合 11-23x 杠杆，分钟级 wiggle 就触发止损。
+
+### Step 3：缺失的对称追空 gate
+
+原代码只拦截 long 追涨 (`signed_change > 8` → 拒多头)，**没有**拦截 short 追空 (`signed_change > 8` → 拒空头)。`signed_change` 是方向调整后的值——short 时 `change=-8%` 被调整为 `+8%`，所以 `signed_change > 8` 对空头意味着币已跌 8%+，入场太晚。
+
+原代码第 466 行：
+```python
+if state["side"] == "long" and state["signed_change"] > 8.0 and state["stage"] != "accepted_breakout":
+    return False, "do_not_chase_pump"
+```
+缺少空头对称：
+```python
+# 缺：short 时 signed_change > 8 也应拦截
+```
+
+### 修复（3 处）
+
+| # | 位置 | 旧 | 新 | 理由 |
+|---|------|-----|-----|------|
+| 1 | **止损公式** | `/850.0`, clamp(0.007, 0.025) | **`/200.0`**, clamp(0.015, 0.075) | 低价币 stop 从 0-1% → 2-7% |
+| 2 | **neutral_probe stop** | clamp(×1.5, 0.012, 0.028) | clamp(×1.5, **0.020, 0.080**) | 跟随 floor/ceiling 上移 |
+| 3 | **`trend_pressure_build`** | `signed_change > 0.5 and book >= -0.02` | **`0.5 < signed_change <= 5.0 and book >= -0.01`** | 已移动 5%+ 的币不进弱 stage |
+| 4 | **对称追空 gate** | 只拦 long | **`signed_change > 8` → 拒所有方向**（accepted_breakout 除外） | 补齐缺失的追空拦截 |
+
+### 验证
+
+重启后 2 分钟内 `do_not_chase_extended_move` 拦截 486 次——新 gate 立即生效。
+
+### 关键教训
+
+1. **先看 stage 胜率分布**——总胜率 36% 掩盖了 expansion_continuation 63.6% vs trend_pressure_build 14.3% 的巨大差异
+2. **止损距离必须按币价 scale**——分母 850 对 $0.01 币产出 0% stop，分母 200 产出 2-7%
+3. **检查 gate 对称性**——只拦多头不拦空头的 gate 是定时炸弹
+4. **signed_change 理解**：它是方向调整值，`signed_change > 8` 在 long 和 short 两侧都意味着"已大动"
 
 > 完整 SQL 全集及止损距离计算方法见 [win-rate-analysis-queries.md](win-rate-analysis-queries.md)。以下是常用快速查询。
 
