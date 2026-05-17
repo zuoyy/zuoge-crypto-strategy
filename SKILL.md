@@ -33,12 +33,20 @@ description: "用于编写、校验、回测并自动投递实时策略候选到
 
 常见犯规场景：看到 `/opt/homebrew/var/crypto-trader/strategies/candidates/` 下有同名文件就直接改——这是生产部署镜像，不是源码。真正的源码在 `$ZUOGE_CRYPTO_PROJECT_ROOT`。
 
+### 🔴 数据查询：只用生产数据库真实数据，绝不拍脑袋
+
+账户余额、持仓 notional、`max_order_notional_pct` 等后端参数**只能从生产 DB 查询**。代码中的 fallback 默认值（如 `strategy_sdk.number(risk_limits.get("max_order_notional_pct"), 40)` 里的 `40`）不代表后端实际配置。
+
+**错误示例**：推测账户 $500，基于此做仓位分析 → 完全不成立。
+**正确做法**：`SELECT equity, total_exposure, open_positions FROM portfolio_snapshots ORDER BY updated_at DESC LIMIT 1`
+
 ## 策略胜率优化方法论
 
 ⚠️ **先修评分公式，再调 gate 阈值。** 不要只调 `neutral_probe` score floor 或 `directional_book` gate——先检查评分公式本身是否奖励了错误行为。
 
 常见结构性陷阱：
 - **`flow_score` 奖励追涨**：`signed_change * N` 线性系数让拉得最凶的币得最高分。应改为奖金衰减（≤5% 线性，5-15% 衰减到 0，≥15% 不奖）。参见 [references/change-bonus-pattern.md](references/change-bonus-pattern.md)。
+- **`_stage()` 方向错误——动量追涨而非反转抄底**：所有阶段都要求 `signed_change > 0`（币已按信号方向移动），本质是追涨杀跌。专业做法是反转优先：币大跌→抄底做多，币大涨→摸顶做空。详见 [references/reversal-first-stage-architecture.md](references/reversal-first-stage-architecture.md)。
 - **`candidate_score`/`move_score` 奖励大波动**：`log1p(abs(change))` 不区分方向，涨 20% 和跌 20% 得同分。
 - **缺少超买/超卖过滤**：`position_in_range` 来自 1h/4h kline，>0.88 不做多，<0.12 不做空。
 - **缺少大趋势确认**：做多要求 4h `trend_return_pct > -1.5%`，做空要求 `< 1.5%`。
@@ -319,12 +327,14 @@ GROUP BY reason_code ORDER BY cnt DESC;
 
 - **杠杆**：`pick_leverage()` 动态计算，从 `risk_limits.min/max_leverage` 读范围，按阶段/分数/波动率调参。保守阶段（neutral_probe 等）→ 固定 `min_leverage`。详见 [references/leverage-dynamic-calculation.md](references/leverage-dynamic-calculation.md)。
 - **动态下单金额**：`desired_notional = min(risk/stop, equity × max_order_pct)`，其中 `max_order_pct = risk_limits.max_order_notional_pct / 100`。后端修改后策略自动跟随，无需改代码。⚠️ 代码中的 `, 40` 只是 fallback 默认值，实际后端值必须从 `strategy_risk_allocations` 表查询——不要假设。详见 [references/max-order-notional-dynamic.md](references/max-order-notional-dynamic.md)。
-- **下单金额完整计算链**：`risk_pct`（分数浮动 1.5-4.0%）→ `target_risk_amount = equity × risk_pct/100` → `desired_notional = target_risk / stop_pct` → 多重封顶（`effective_order_cap`、`remaining_symbol_cap`、`remaining_total_cap`、`leverage_notional_cap` 取 min）→ `quantity = max_notional / price`。改 `risk_pct` 直接影响仓位，改止损宽度反向影响仓位。
+- **下单金额完整计算链**：`risk_pct = clamp(2.0 + (score-55)×0.06, 2.0, 4.0)`（分数动态浮动）→ `target_risk_amount = equity × risk_pct/100` → `desired_notional = target_risk / stop_pct` → 多重封顶（`effective_order_cap`、`remaining_symbol_cap`、`remaining_total_cap`、`leverage_notional_cap` 取 min）→ `quantity = max_notional / price`。改 `risk_pct` 直接影响仓位，改止损宽度反向影响仓位——止损放宽后必须同步提 `risk_pct` 否则仓位同比例缩小。
 - **加仓**：专业金字塔加仓 — 7 层 gate（浮盈≥1.5%、趋势续、book 撑、回调入场、阶段过滤、敞口检查、亏损保护）+ 4 级冷却分层（90/180/240/120min），budget联动 `max_add_count`（1/(1+n)递减），参数从 backend 动态读取不写死。详见 [references/position-management-add-gate.md](references/position-management-add-gate.md)。预算联动细节见 [references/dynamic-add-budget-linkage.md](references/dynamic-add-budget-linkage.md)。
+- **加仓评估冷却**：加仓被拒后对同一 `symbol:side` 设 300s 冷却——冷却期内跳过全部 7 层检查，直接返回 `add_in_cooldown`。实测减少 86% 无效评估。详见 [references/add-check-cooldown.md](references/add-check-cooldown.md)。
 - **效率漏斗**：discover() 源头 candidate 质量直接决定 context 评估量（50万+/h decision logs）。收紧源头（score floor↑、candidate limit↓、TTL动态化、方向预筛选）比加 gate 更有效。详见 [references/efficiency-funnel-source-quality.md](references/efficiency-funnel-source-quality.md)。
 - **仓位轮换**：满仓时高质量新信号（score≥85）可主动止盈最弱浮盈持仓（0.5%~2.5% PnL，全大盈时取最弱），释放 slot 落袋为安。调用 `GET /api/v1/agent/positions` 获取全策略持仓做全局比较，15s TTL 缓存不 flooding。⚠️ close 信号必须手动构建（不用 signal_envelope 以免 cross-symbol price_ref 错位），且 manifest 需 `max_signals_per_candidate: 2` 防止双信号截断。排查链路见 [references/position-rotation.md](references/position-rotation.md)。
 - **止损波动率**：双源波动率代理（24h change + 1h trend），替代单源 24h change。短时剧烈波动的币自动放宽止损，已冷却的币自动收紧。⚠️ **分母 850 陷阱**：生产验证分母 850 导致止损 0.7-1.0%，配合 11-23x 杠杆必被扫。校准值应为 150-200。详见 [references/stop-formula-dual-volatility.md](references/stop-formula-dual-volatility.md)。
 - **阶段多样性**：加 `early_trend` 过渡阶段解决全 short 单一信号问题 + long book gate 放宽 ±0.03 中性区。详见 [references/stage-classification-diversity.md](references/stage-classification-diversity.md)。
+- **阶段差异化参数**：止损、移动止盈、盈亏比按 stage 分化——reversal 给宽止损+runner trail，trend_continuation 给紧止损+标准 trail。避免一刀切导致的 reversal 被扫 / trend 跑不掉。详见 [references/stage-specific-parameters.md](references/stage-specific-parameters.md)。
 - **阶段诊断**：信号阶段分布分析、死代码检查（sweep_reclaim）、BTC regime gate 影响、stage_bonus 配置。详见 [references/stage-diversity-diagnosis.md](references/stage-diversity-diagnosis.md)。
 - **Gate 迭代校准**：query→fix→requery 循环，连锁反应观察，gate 放宽优先级排序。详见 [references/gate-calibration-iterative.md](references/gate-calibration-iterative.md)。
 
@@ -339,6 +349,8 @@ GROUP BY reason_code ORDER BY cnt DESC;
 - 策略胜率诊断与优化：[references/strategy-optimization-playbook.md](references/strategy-optimization-playbook.md)
 - 胜率分析 SQL 全集：[references/win-rate-analysis-queries.md](references/win-rate-analysis-queries.md)
 - **移动止盈吃不到大肉**：[references/trailing-stop-runner-problem.md](references/trailing-stop-runner-problem.md)
+- **反转优先阶段分类器**：[references/reversal-first-stage-architecture.md](references/reversal-first-stage-architecture.md)
+- **加仓评估冷却**：[references/add-check-cooldown.md](references/add-check-cooldown.md)
 - 价格量化陷阱：[references/price-quantization-pitfalls.md](references/price-quantization-pitfalls.md)
 - risk_budget sizing 瓶颈：[references/risk-budget-sizing-pitfall.md](references/risk-budget-sizing-pitfall.md)
 - risk_budget 公式倒置：[references/risk-budget-formula-inversion.md](references/risk-budget-formula-inversion.md)
@@ -350,10 +362,12 @@ GROUP BY reason_code ORDER BY cnt DESC;
 - 动态杠杆计算：[references/leverage-dynamic-calculation.md](references/leverage-dynamic-calculation.md)
 - 持仓管理与加仓门禁：[references/position-management-add-gate.md](references/position-management-add-gate.md)
 - 仓位轮换（落袋为安）：[references/position-rotation.md](references/position-rotation.md)
+- 仓位轮换死锁诊断（分数天花板 vs 绝对阈值）：[references/position-rotation-deadlock.md](references/position-rotation-deadlock.md)
 - 动态下单金额封顶：[references/max-order-notional-dynamic.md](references/max-order-notional-dynamic.md)
 - 加仓预算动态联动：[references/dynamic-add-budget-linkage.md](references/dynamic-add-budget-linkage.md)
 - 效率漏斗（源头质量）：[references/efficiency-funnel-source-quality.md](references/efficiency-funnel-source-quality.md)
 - 止损波动率：[references/stop-formula-dual-volatility.md](references/stop-formula-dual-volatility.md)
+- **止盈全平约定**：[references/close-ratio-ladder-tail.md](references/close-ratio-ladder-tail.md) — `close_ratio: "1.0"` 哨兵值触发 Binance `ClosePosition=true`。止盈梯子在 `strategy_sdk.py` `basic_trade_params()` 构建，不在策略文件。策略层配合 `allow_partial_exit: False`。
 - 阶段多样性诊断与修复：[references/stage-diversity-diagnosis.md](references/stage-diversity-diagnosis.md)
 - BTC regime 梯度惩罚：[references/btc-regime-graduated-penalty.md](references/btc-regime-graduated-penalty.md)
 - 信号拒绝诊断：[references/signal-rejection-diagnosis.md](references/signal-rejection-diagnosis.md)
