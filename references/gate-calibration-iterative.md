@@ -60,7 +60,29 @@ GROUP BY reason ORDER BY cnt DESC LIMIT 15;
 ### Round 3: spread + 信号分散
 - 查数据：spread_too_wide 26k（新瓶颈）、前 3 币占 58%
 - 改：spread 20→25（非 breakout）、币级 300s 冷却、early_trend 顺序+book 修复
-- 观察：待验证
+- 观察：spread_too_wide 从 top gate 消失 ✅；book_not_supporting_short 成新瓶颈（连锁反应）
+
+### Round 4: 流动性门槛
+- 查数据：22 个币出信号，仅 10 个有成交；SUI（54 信号 0 成交）、SWARMS（42/0）
+- 改：discover quote_volume 25M→100M、trade_gate 20M→60M、liquidity_quality divisor 4M→10M
+- 观察：candidate 池收缩，信号集中在有流动性的中大盘币
+
+## 仓位轮换诊断循环
+
+轮换涉及跨 symbol 信号，比普通信号多一层复杂度。排查按此顺序：
+
+```
+decision_logs ROTATE? → signals 表 close signal? 
+  → rejects 表 price_deviation/acceptable_range?
+  → position_plan_runtimes 持仓仍在?
+```
+
+常见根因层级：
+1. **ROTATE 有但 signals 零** → close 信号未过 framework validation（`_validate_signal`）
+2. **rejects 表 `price_deviation_exceeded`** → cross-symbol price_ref 错位，close 信号用了新币 context
+3. **rejects 表 `acceptable_range required`** → `execution_constraints` 缺失或放错层级（应在 trade_params 内）
+4. **signals 表有 close 但 status=expired** → testnet 流动性不足，市价单未成交
+5. **position_plan_runtimes 仍 active** → Go backend 未执行平仓（reject 后静默）
 
 ## 禁忌
 

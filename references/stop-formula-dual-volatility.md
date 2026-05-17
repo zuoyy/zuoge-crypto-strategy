@@ -37,6 +37,83 @@ stop_pct = clamp(0.007 + volatility_proxy / 850.0, 0.007, 0.025)
 - `/850.0` — 比旧的 `/900.0` 略激进，让 stop 更接近真实波动率
 - `max(..., 1.5)` — 极稳定币至少 1.5% 的代理波动率
 
+## ⚠️ 分母校准陷阱（2026-05-16 生产验证）
+
+### 现象
+
+`workflow_distilled_funnel` 0.1.0 生产运行 7 天：
+- 交易所止损触发（`fills.action_id IS NULL`）：**14笔全亏，胜率 0%**，净亏 -$355
+- 策略主动平仓（`fills.action_id IS NOT NULL`）：**7W/7L，胜率 50%**，净盈 +$188
+
+策略方向是对的，但止损全被扫掉。
+
+### 根因：分母 850 太大
+
+```python
+# 当前公式
+stop_pct = clamp(0.007 + volatility_proxy / 850.0, 0.007, 0.025)
+```
+
+对于典型山寨币波动（volatility_proxy = 3~10%）：
+- `/850` → 波动贡献 0.004~0.012 → 最终 stop 0.7%~1.9%
+- 配合 **11x~23x 杠杆** → 1% 逆向波动 = 11%~23% 仓位亏损
+- 加密货币分钟级 wiggle 1-2% 是常态 → **止损必触发**
+
+### 实际验证（从生产库提取）
+
+| symbol | volatility_proxy | stop_pct 公式输出 | lev | 止损距离 | 结果 |
+|--------|-----------------|-------------------|-----|---------|------|
+| LIGHTUSDT | ~3% | 1.0% | 23x | 1.0% | -$32.44 |
+| STXUSDT | ~2% | 0.48% | 11x | 0.48% | -$28.92 |
+| MOCAUSDT | ~3% | 1.0% | 11x | 1.0% | -$62.88 (3笔) |
+| CROSSUSDT | ~3% | 1.0% | 23x | 1.0% | -$29.24 |
+
+所有止损距离 ≤1.0%，无一幸存。
+
+### 正确校准
+
+分母应降到 **150~200**，使止损幅度匹配山寨币实际波动：
+
+| volatility_proxy | /850 (旧) | /200 | /150 | /100 |
+|-----------------|-----------|------|------|------|
+| 3% | 1.05% | 2.2% | 2.7% | 3.7% |
+| 5% | 1.29% | 3.2% | 4.0% | 5.7% |
+| 8% | 1.64% | 4.7% | 6.0% | 8.7% |
+| 12% | 2.11% | 6.7% | 8.7% | 12.7%→clamp |
+
+**推荐**：`/200` 作为起点，稳定币 ~2% stop，高波动币 ~5-7% stop。
+
+### 校准公式
+
+```python
+# 修复后
+stop_pct = clamp(0.015 + volatility_proxy / 200.0, 0.015, 0.075)
+# floor 从 0.7% → 1.5%（山寨币基础 wiggle）
+# ceiling 从 2.5% → 7.5%（高波动币有呼吸空间）
+```
+
+### 配套调整
+
+- **杠杆联动**：高杠杆币应给更宽的止损。`pick_leverage()` 中 max_leverage 应从 23x 降到 10-12x（山寨币合理区间）
+- **neutral_probe 放宽**：若保留 `stop_pct * 1.5` 逻辑，floor clamp 也需相应提高
+
+### 验证方法
+
+修改止损公式后，用生产库验证：
+
+```sql
+-- 对比修复前后的预期止损距离
+SELECT f.symbol, f.position_side,
+  ROUND((f.price::numeric - s.payload_json->>'price_ref')::numeric / 
+        (s.payload_json->>'price_ref')::numeric * 100, 2) as actual_stop_pct,
+  (s.payload_json->'trade_params'->'exits'->'stop_loss'->>'stop_price')::numeric as stop_price
+FROM fills f
+JOIN signals s ON f.signal_id = s.signal_id
+WHERE f.action_id IS NULL AND f.realized_pnl < 0
+  AND s.strategy_id = 'workflow_distilled_funnel'
+  AND f.filled_at > NOW() - INTERVAL '7 days';
+```
+
 ## 风险
 
 放宽止损范围意味着单笔最大亏损可能增大。配合 `risk_budget_pct` 的动态递减（加仓 budget × 0.5~0.25）和 `max_order_notional_pct` 封顶，总风险可控。

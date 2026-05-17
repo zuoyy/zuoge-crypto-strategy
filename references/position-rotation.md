@@ -66,19 +66,38 @@ slots_remaining ≤ 0        # 策略满仓，无空余 slot
 
 **修复**：manifest 设置 `max_signals_per_candidate: 2`。
 
-### 3. execution_constraints 缺失
+### 3. execution_constraints 缺失与错放层级
 
 market close 信号（stop_loss.mode=none, take_profit.mode=none）**仍然需要** `execution_constraints.max_slippage_pct`，否则 Go backend 拒绝：
 > `"price protection is required via acceptable_range or execution_constraints.max_slippage_pct"`
 
-手动构建的 rotation close 信号必须包含：
+⚠️ **关键陷阱**：`execution_constraints` 必须放在 **`trade_params` 内部**，不是信号顶层。`basic_trade_params()` 返回的结构是 `trade_params.execution_constraints`，Go backend 在 trade_params 内部查找。放在信号顶层的 `execution_constraints` 会被忽略。
+
+**正确结构**（手动构建时）：
 ```json
-"execution_constraints": {
-    "max_slippage_pct": "0.003",
-    "min_reward_risk": "1.0",
-    "quote_staleness_seconds": 20
+{
+  "trade_params": {
+    "entry": { ... },
+    "exits": { ... },
+    "sizing": { ... },
+    "execution_constraints": {           // ← 在 trade_params 里面！
+      "max_slippage_pct": "0.003",
+      "min_reward_risk": "1.0",
+      "quote_staleness_seconds": 20
+    }
+  }
 }
 ```
+
+**错误**（信号顶层，backend 不认）：
+```json
+{
+  "trade_params": { ... },
+  "execution_constraints": { ... }       // ← 信号顶层，被忽略！
+}
+```
+
+排查：所有 `acceptable_range: price protection required` 拒绝且 signal_reason 不包含 `rotation` 的，极大概率是 placement 错误。
 
 ### 4. 排查步骤
 

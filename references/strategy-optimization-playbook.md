@@ -4,11 +4,13 @@
 
 ## 优化方法论（优先级顺序）
 
+0. **Step 0**: ⭐ 先拆分成交来源——`fills.action_id IS NULL`（交易所止损）vs `IS NOT NULL`（策略平仓）。如果止损全亏但策略平仓胜率正常，问题在止损公式而非策略方向。详见 [production-db-quick-diagnosis.md](production-db-quick-diagnosis.md) 成交性能分层诊断。
 1. **Step 1**: 拉总盘（signals + fills 算胜率/盈亏比/期望值）
 2. **Step 2**: 逐笔看亏损原因（联查 `signal_reason`，看 stage/change/book 模式）
 3. **Step 3**: ⚠️ **先查评分公式**——是否有结构性问题（如奖励追涨）——再调 gate 阈值。不要只调阈值，要修公式。
 4. **Step 4**: 对照 stage 分类器——是否 90%+ 交易落入 `neutral_probe`
 5. **Step 5**: 加缺失的过滤器（超买/超卖、大趋势确认、市场 regime）
+6. **Step 6**: ⚠️ **查止损公式**——提取 `signal.payload_json` 中 `stop_price` 与 `price_ref` 的距离，若 < 1.5% 且杠杆 > 10x → 止损公式分母太大，修复后再调其他 gate。
 
 ## 诊断四步法
 
@@ -280,6 +282,8 @@ desired_notional   = target_risk_amount / stop_pct  # $2,500
 核心门控（book 方向、discover 天花板、止损）是**不可撼动的底线**。
 
 ## 通用诊断语句
+
+> 完整 SQL 全集及止损距离计算方法见 [win-rate-analysis-queries.md](win-rate-analysis-queries.md)。以下是常用快速查询。
 
 ```sql
 -- 1. 拉总盘

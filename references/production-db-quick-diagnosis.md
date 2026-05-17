@@ -119,6 +119,151 @@ curl -s "$STRATEGY_CONTEXT_API_URL/api/v1/agent/strategy/context/DUSKUSDT?strate
   │           └─ 改造为按 candidate 动态订阅
   ├─ same_side_already_near_max_exposure → 同向敞口过高
   └─ 其他 gate reject → 查 strategy code
+
+3. 查 fills 成交性能分层 ← ⭐ 最关键的诊断（新增）
+```
+
+## ⭐ 成交性能分层诊断（fills action_id 拆分法）
+
+**这是区分「策略方向错误」和「止损太紧」的第一手诊断。** 不要只看总胜率——必须按 `action_id` 拆分成交来源。
+
+### 核心查询：策略平仓 vs 交易所止损
+
+```sql
+-- 按 action_id 是否为空拆分成交
+SELECT 
+    CASE WHEN f.action_id IS NULL THEN 'STOP_LOSS(exchange)' 
+         ELSE 'STRATEGY_EXIT' END as exit_type,
+    COUNT(*) as cnt,
+    COUNT(*) FILTER (WHERE f.realized_pnl > 0) as wins,
+    COUNT(*) FILTER (WHERE f.realized_pnl < 0) as losses,
+    ROUND(100.0 * COUNT(*) FILTER (WHERE f.realized_pnl > 0) / 
+          NULLIF(COUNT(*) FILTER (WHERE f.realized_pnl != 0),0), 1) as win_rate,
+    ROUND(SUM(f.realized_pnl)::numeric, 2) as total_pnl,
+    ROUND(AVG(CASE WHEN f.realized_pnl > 0 THEN f.realized_pnl END)::numeric, 2) as avg_win,
+    ROUND(AVG(CASE WHEN f.realized_pnl < 0 THEN f.realized_pnl END)::numeric, 2) as avg_loss
+FROM fills f
+JOIN signals s ON f.signal_id = s.signal_id
+WHERE f.filled_at > NOW() - INTERVAL '7 days'
+  AND f.realized_pnl != 0
+  AND s.strategy_id = 'workflow_distilled_funnel'
+GROUP BY 1;
+```
+
+**解读**：
+- `action_id IS NULL` = 交易所止损/强平触发，非策略主动平仓
+- `action_id IS NOT NULL` = 策略通过 `signal_actions` 主动平仓
+- 如果 `STOP_LOSS` 胜率 0% 但 `STRATEGY_EXIT` 胜率正常 → **止损太紧，不是方向错**
+- 如果两者胜率都低 → **策略方向判断有问题**
+
+### 止损成交明细（看止损距离）
+
+```sql
+-- 提取止损单的 entry vs stop 距离
+SELECT 
+    f.symbol, f.position_side,
+    ROUND(f.realized_pnl::numeric, 2) as loss,
+    s.payload_json->>'price_ref' as entry_ref,
+    s.payload_json->'trade_params'->'exits'->'stop_loss'->>'stop_price' as stop_price,
+    s.payload_json->'trade_params'->'margin'->>'leverage' as leverage,
+    -- 计算止损距离百分比
+    ROUND(
+      ABS((s.payload_json->'trade_params'->'exits'->'stop_loss'->>'stop_price')::numeric - 
+           (s.payload_json->>'price_ref')::numeric) / 
+      (s.payload_json->>'price_ref')::numeric * 100, 3
+    ) as stop_distance_pct,
+    f.filled_at
+FROM fills f
+JOIN signals s ON f.signal_id = s.signal_id
+WHERE f.action_id IS NULL 
+  AND f.realized_pnl < 0
+  AND s.strategy_id = 'workflow_distilled_funnel'
+  AND f.filled_at > NOW() - INTERVAL '7 days'
+ORDER BY f.realized_pnl ASC;
+```
+
+如果 `stop_distance_pct` 全部 < 1.5% 且杠杆 11-23x → **止损公式分母太大，必须修复**。
+
+### 按交易类型拆分 action_type
+
+```sql
+-- 看 action_type 分布（了解是什么样的平仓行为）
+SELECT 
+    sa.action_type, sa.trigger_reason,
+    COUNT(*) as cnt,
+    COUNT(*) FILTER (WHERE f.realized_pnl > 0) as wins,
+    ROUND(SUM(f.realized_pnl)::numeric, 2) as total_pnl
+FROM fills f
+JOIN signal_actions sa ON f.action_id = sa.action_id
+WHERE f.filled_at > NOW() - INTERVAL '7 days'
+  AND f.realized_pnl != 0
+GROUP BY sa.action_type, sa.trigger_reason
+ORDER BY total_pnl DESC;
+```
+
+### 按 symbol 拆分盈亏（找亏损集中币种）
+
+```sql
+SELECT 
+    f.symbol, f.position_side,
+    COUNT(*) FILTER (WHERE f.realized_pnl != 0) as trades,
+    COUNT(*) FILTER (WHERE f.realized_pnl > 0) as wins,
+    COUNT(*) FILTER (WHERE f.realized_pnl < 0) as losses,
+    ROUND(SUM(f.realized_pnl)::numeric, 2) as total_pnl
+FROM fills f
+JOIN signals s ON f.signal_id = s.signal_id
+WHERE f.filled_at > NOW() - INTERVAL '7 days'
+  AND f.realized_pnl != 0
+  AND s.strategy_id = 'workflow_distilled_funnel'
+GROUP BY f.symbol, f.position_side
+ORDER BY total_pnl ASC;
+```
+
+### 完整诊断 SQL（一键跑）
+
+```sql
+-- ═══════════════════════════════════════════
+-- 一键诊断：胜率、止损、策略平仓分层
+-- ═══════════════════════════════════════════
+
+-- A. 总盘
+SELECT 
+    COUNT(*) FILTER (WHERE realized_pnl != 0) as trades,
+    COUNT(*) FILTER (WHERE realized_pnl > 0) as wins,
+    COUNT(*) FILTER (WHERE realized_pnl < 0) as losses,
+    ROUND(SUM(realized_pnl)::numeric, 2) as total_pnl
+FROM fills f
+JOIN signals s ON f.signal_id = s.signal_id
+WHERE s.strategy_id = 'workflow_distilled_funnel'
+  AND f.filled_at > NOW() - INTERVAL '7 days';
+
+-- B. action_id 分层（止损 vs 策略平仓）
+SELECT 
+    CASE WHEN f.action_id IS NULL THEN 'STOP_LOSS' ELSE 'STRATEGY' END as src,
+    COUNT(*) FILTER (WHERE f.realized_pnl != 0) as trades,
+    COUNT(*) FILTER (WHERE f.realized_pnl > 0) as wins,
+    COUNT(*) FILTER (WHERE f.realized_pnl < 0) as losses,
+    ROUND(SUM(f.realized_pnl)::numeric, 2) as total_pnl
+FROM fills f
+JOIN signals s ON f.signal_id = s.signal_id
+WHERE s.strategy_id = 'workflow_distilled_funnel'
+  AND f.filled_at > NOW() - INTERVAL '7 days'
+  AND f.realized_pnl != 0
+GROUP BY 1;
+
+-- C. 按币种
+SELECT f.symbol, f.position_side,
+    COUNT(*) FILTER (WHERE f.realized_pnl != 0) as trades,
+    COUNT(*) FILTER (WHERE f.realized_pnl > 0) as wins,
+    ROUND(SUM(f.realized_pnl)::numeric, 2) as total_pnl
+FROM fills f
+JOIN signals s ON f.signal_id = s.signal_id
+WHERE s.strategy_id = 'workflow_distilled_funnel'
+  AND f.filled_at > NOW() - INTERVAL '7 days'
+  AND f.realized_pnl != 0
+GROUP BY f.symbol, f.position_side
+ORDER BY total_pnl ASC
+LIMIT 15;
 ```
 
 ## 进程级诊断

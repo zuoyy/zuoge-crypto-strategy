@@ -49,6 +49,10 @@ description: "用于编写、校验、回测并自动投递实时策略候选到
 
 **第五轮（gate 分拆 + 时间放宽）：** 当 `breakout_without_1h_4h_confirmation` 仍占 17%+ 拒绝时，把 gate 按 stage 分拆——`accepted_breakout` 保持 bias≥0，`expansion_continuation` 放宽到 bias≥-0.08。book gate 从 ±0.03 扩到 ±0.05（回收 21% 拒绝）。加仓浮盈门槛 1.5%→1.0%。信号过期多时：signal expire_ms 60s→90s + entry expire 45s→60s。关键原则：**不同 stage 不同 gate 阈值**，不要一刀切。
 
+**第六轮（spread 分级 + 冷却 + 流动性）：** spread gate 不要一刀切 20bps——breakout 保持 20，其它放宽到 25。加 per-symbol 300s 冷却防止同一币频繁发信号（前 3 币占 58%→分散）。quote_volume 门槛从 25M→100M（discover）和 20M→60M（trade_gate），配合 liquidity_quality divisor 4M→10M。一个 gate 放宽后其他 gate 会成为新瓶颈——这是正常连锁反应，不要惊慌回滚。
+
+**第七轮（BTC regime 柔性化 + stage 多样性）：** BTC 跌 >1.5% 全杀 long 太粗糙。改为梯度惩罚：BTC 0-2% 不罚，2-5% 按比例扣 setup_bias（0→12），>5% 极端才全停。`sweep_reclaim` stage 从死代码复活（多头深跌+超卖+book 翻多，空头急涨+超买+book 翻空）。`early_trend` bonus 0→2，book ≥0.0→≥-0.01，且排在 trend_pressure_build 之后只捡 [0.2,0.5] 过渡区。pullback_reaccept book 0.05→0.03。
+
 **源头收紧 > gate 加码**：discover() 多放一个弱 candidate，context delta 每秒触发多次评估链。优先从源头砍弱 candidate（score floor、limit、动态 TTL），减少 context 评估总量。详见 [references/efficiency-funnel-source-quality.md](references/efficiency-funnel-source-quality.md)。
 
 ### ⚠️ 修改后必须提交
@@ -302,7 +306,7 @@ GROUP BY reason_code ORDER BY cnt DESC;
 - **加仓**：专业金字塔加仓 — 7 层 gate（浮盈≥1.5%、趋势续、book 撑、回调入场、阶段过滤、敞口检查、亏损保护）+ 4 级冷却分层（90/180/240/120min），budget联动 `max_add_count`（1/(1+n)递减），参数从 backend 动态读取不写死。详见 [references/position-management-add-gate.md](references/position-management-add-gate.md)。预算联动细节见 [references/dynamic-add-budget-linkage.md](references/dynamic-add-budget-linkage.md)。
 - **效率漏斗**：discover() 源头 candidate 质量直接决定 context 评估量（50万+/h decision logs）。收紧源头（score floor↑、candidate limit↓、TTL动态化、方向预筛选）比加 gate 更有效。详见 [references/efficiency-funnel-source-quality.md](references/efficiency-funnel-source-quality.md)。
 - **仓位轮换**：满仓时高质量新信号（score≥85）可主动止盈最弱浮盈持仓（0.5%~2.5% PnL，全大盈时取最弱），释放 slot 落袋为安。调用 `GET /api/v1/agent/positions` 获取全策略持仓做全局比较，15s TTL 缓存不 flooding。⚠️ close 信号必须手动构建（不用 signal_envelope 以免 cross-symbol price_ref 错位），且 manifest 需 `max_signals_per_candidate: 2` 防止双信号截断。排查链路见 [references/position-rotation.md](references/position-rotation.md)。
-- **止损波动率**：双源波动率代理（24h change + 1h trend），替代单源 24h change。短时剧烈波动的币自动放宽止损，已冷却的币自动收紧。详见 [references/stop-formula-dual-volatility.md](references/stop-formula-dual-volatility.md)。
+- **止损波动率**：双源波动率代理（24h change + 1h trend），替代单源 24h change。短时剧烈波动的币自动放宽止损，已冷却的币自动收紧。⚠️ **分母 850 陷阱**：生产验证分母 850 导致止损 0.7-1.0%，配合 11-23x 杠杆必被扫。校准值应为 150-200。详见 [references/stop-formula-dual-volatility.md](references/stop-formula-dual-volatility.md)。
 - **阶段多样性**：加 `early_trend` 过渡阶段解决全 short 单一信号问题 + long book gate 放宽 ±0.03 中性区。详见 [references/stage-classification-diversity.md](references/stage-classification-diversity.md)。
 - **阶段诊断**：信号阶段分布分析、死代码检查（sweep_reclaim）、BTC regime gate 影响、stage_bonus 配置。详见 [references/stage-diversity-diagnosis.md](references/stage-diversity-diagnosis.md)。
 - **Gate 迭代校准**：query→fix→requery 循环，连锁反应观察，gate 放宽优先级排序。详见 [references/gate-calibration-iterative.md](references/gate-calibration-iterative.md)。
@@ -334,4 +338,5 @@ GROUP BY reason_code ORDER BY cnt DESC;
 - 阶段多样性诊断与修复：[references/stage-diversity-diagnosis.md](references/stage-diversity-diagnosis.md)
 - BTC regime 梯度惩罚：[references/btc-regime-graduated-penalty.md](references/btc-regime-graduated-penalty.md)
 - 信号拒绝诊断：[references/signal-rejection-diagnosis.md](references/signal-rejection-diagnosis.md)
+- 胜率诊断 SQL 全集：[references/win-rate-analysis-queries.md](references/win-rate-analysis-queries.md)
 - 模板：[templates/dynamic_strategy.py](templates/dynamic_strategy.py)
