@@ -95,6 +95,8 @@ cd /Users/zuo/.hermes/skills/zuoge-crypto-strategy && git add -A && git commit -
 > **🔴 硬规则 1：所有策略修改必须走此工作流。** 不要跳过步骤直接修改生产 enabled 文件。若已修改的文件已是生产策略文件，也必须回填到候选目录、补走 check/test/backtest。
 > 
 > **🔴 硬规则 2：永远只编辑项目源码根目录下的文件。** 源码在 `$ZUOGE_CRYPTO_PROJECT_ROOT/strategy/strategies/candidates/`。`/opt/homebrew/var/crypto-trader/` 下的同名文件是生产部署镜像——管线下游产物，不手动编辑。
+>
+> **🔴 硬规则 3：生产 DB 值是权威信源。** 不要用代码里的 fallback 默认值（如 `, 40`）去估算后端配置。后端参数（`max_order_notional_pct`、`max_positions` 等）存在 `strategy_risk_allocations` 表，修改前先 `SELECT`。
 
 在项目根目录内工作：
 
@@ -316,7 +318,8 @@ GROUP BY reason_code ORDER BY cnt DESC;
 ### 杠杆与下单金额
 
 - **杠杆**：`pick_leverage()` 动态计算，从 `risk_limits.min/max_leverage` 读范围，按阶段/分数/波动率调参。保守阶段（neutral_probe 等）→ 固定 `min_leverage`。详见 [references/leverage-dynamic-calculation.md](references/leverage-dynamic-calculation.md)。
-- **下单金额**：`desired_notional = min(risk/stop, equity × max_order_pct)`，其中 `max_order_pct = risk_limits.max_order_notional_pct / 100`。后端修改后策略自动跟随，无需改代码。详见 [references/max-order-notional-dynamic.md](references/max-order-notional-dynamic.md)。
+- **动态下单金额**：`desired_notional = min(risk/stop, equity × max_order_pct)`，其中 `max_order_pct = risk_limits.max_order_notional_pct / 100`。后端修改后策略自动跟随，无需改代码。⚠️ 代码中的 `, 40` 只是 fallback 默认值，实际后端值必须从 `strategy_risk_allocations` 表查询——不要假设。详见 [references/max-order-notional-dynamic.md](references/max-order-notional-dynamic.md)。
+- **下单金额完整计算链**：`risk_pct`（分数浮动 1.5-4.0%）→ `target_risk_amount = equity × risk_pct/100` → `desired_notional = target_risk / stop_pct` → 多重封顶（`effective_order_cap`、`remaining_symbol_cap`、`remaining_total_cap`、`leverage_notional_cap` 取 min）→ `quantity = max_notional / price`。改 `risk_pct` 直接影响仓位，改止损宽度反向影响仓位。
 - **加仓**：专业金字塔加仓 — 7 层 gate（浮盈≥1.5%、趋势续、book 撑、回调入场、阶段过滤、敞口检查、亏损保护）+ 4 级冷却分层（90/180/240/120min），budget联动 `max_add_count`（1/(1+n)递减），参数从 backend 动态读取不写死。详见 [references/position-management-add-gate.md](references/position-management-add-gate.md)。预算联动细节见 [references/dynamic-add-budget-linkage.md](references/dynamic-add-budget-linkage.md)。
 - **效率漏斗**：discover() 源头 candidate 质量直接决定 context 评估量（50万+/h decision logs）。收紧源头（score floor↑、candidate limit↓、TTL动态化、方向预筛选）比加 gate 更有效。详见 [references/efficiency-funnel-source-quality.md](references/efficiency-funnel-source-quality.md)。
 - **仓位轮换**：满仓时高质量新信号（score≥85）可主动止盈最弱浮盈持仓（0.5%~2.5% PnL，全大盈时取最弱），释放 slot 落袋为安。调用 `GET /api/v1/agent/positions` 获取全策略持仓做全局比较，15s TTL 缓存不 flooding。⚠️ close 信号必须手动构建（不用 signal_envelope 以免 cross-symbol price_ref 错位），且 manifest 需 `max_signals_per_candidate: 2` 防止双信号截断。排查链路见 [references/position-rotation.md](references/position-rotation.md)。
@@ -335,6 +338,7 @@ GROUP BY reason_code ORDER BY cnt DESC;
 - 生产 DB 快速诊断：[references/production-db-quick-diagnosis.md](references/production-db-quick-diagnosis.md)
 - 策略胜率诊断与优化：[references/strategy-optimization-playbook.md](references/strategy-optimization-playbook.md)
 - 胜率分析 SQL 全集：[references/win-rate-analysis-queries.md](references/win-rate-analysis-queries.md)
+- **移动止盈吃不到大肉**：[references/trailing-stop-runner-problem.md](references/trailing-stop-runner-problem.md)
 - 价格量化陷阱：[references/price-quantization-pitfalls.md](references/price-quantization-pitfalls.md)
 - risk_budget sizing 瓶颈：[references/risk-budget-sizing-pitfall.md](references/risk-budget-sizing-pitfall.md)
 - risk_budget 公式倒置：[references/risk-budget-formula-inversion.md](references/risk-budget-formula-inversion.md)
@@ -353,5 +357,4 @@ GROUP BY reason_code ORDER BY cnt DESC;
 - 阶段多样性诊断与修复：[references/stage-diversity-diagnosis.md](references/stage-diversity-diagnosis.md)
 - BTC regime 梯度惩罚：[references/btc-regime-graduated-penalty.md](references/btc-regime-graduated-penalty.md)
 - 信号拒绝诊断：[references/signal-rejection-diagnosis.md](references/signal-rejection-diagnosis.md)
-- 胜率诊断 SQL 全集：[references/win-rate-analysis-queries.md](references/win-rate-analysis-queries.md)
 - 模板：[templates/dynamic_strategy.py](templates/dynamic_strategy.py)

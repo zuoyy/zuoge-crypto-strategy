@@ -8,24 +8,43 @@
 # _apply_risk_budget_sizing() 中
 risk_limits = context.get("risk_limits") or {}
 max_order_pct = strategy_sdk.number(
-    risk_limits.get("max_order_notional_pct"), 40  # 默认 40%
+    risk_limits.get("max_order_notional_pct"), 40  # ⚠️ 这 40 只是 fallback 默认值，不是后端实际配置
 ) / 100.0
 desired_notional = min(desired_notional, allocated_equity × max_order_pct)
 ```
+
+## 🔴 陷阱：不要假设 fallback 值
+
+代码里 `, 40` 是 fallback 默认值——只在后端没返回该字段时生效。**实际值必须从数据库查询，不要用 40 去估算。**
+
+```sql
+-- 查实际后端配置
+SELECT strategy_id, max_order_notional_pct FROM strategy_risk_allocations;
+```
+
+生产实测 `workflow_distilled_funnel` 的后端配置是 **100%**（不是 40%）。
 
 ## 效果
 
 | 后端配置 | max_order_pct | 单笔 notional 上限（equity=$5,000） |
 |----------|--------------|-----------------------------------|
-| 40%（旧默认） | 0.40 | $2,000 |
-| 60%（当前） | 0.60 | $3,000 |
-| 任意调整 | 自动跟随 | 自动适配 |
+| 40%（代码 fallback） | 0.40 | $2,000 |
+| 100%（生产实际） | 1.00 | $5,000 |
+
+## 两层预算的区别
+
+| 参数 | 位置 | 作用 | 例子 |
+|------|------|------|------|
+| `max_order_notional_pct` | 后端 DB | 名义金额天花板 | 100% → $5000 |
+| `risk_pct` | 策略代码 | 风险预算（净值%） | 2.5% → $125 risk |
+
+`desired_notional = target_risk / stop_pct` 先算出理想仓位，再用 `max_order_notional_pct` 兜底封顶。如果公式算出来的值本来就没碰到天花板，改 `max_order_notional_pct` 不会影响仓位。
 
 ## 后端修改方式
 
 ```sql
-UPDATE risk_limit_configs SET max_order_notional_pct = 60
-WHERE config_id = (SELECT MAX(config_id) FROM risk_limit_configs);
+UPDATE strategy_risk_allocations SET max_order_notional_pct = 60
+WHERE strategy_id = 'workflow_distilled_funnel';
 ```
 
 修改后 strategy 下次 `build_signals_from_context()` 调用自动读取新值，无需重启策略进程（context overlay 缓存 TTL 已处理）。
@@ -36,4 +55,4 @@ WHERE config_id = (SELECT MAX(config_id) FROM risk_limit_configs);
 
 - 最初：硬编码 `0.30`（30%）→ 用户反馈太小
 - 改为：动态读 `risk_limits.max_order_notional_pct`，默认 40%
-- 当前：后端配置 60%，策略自动跟随
+- 当前：后端配置 100%，策略自动跟随
