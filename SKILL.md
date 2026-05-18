@@ -12,6 +12,18 @@ description: "用于编写、校验、回测并自动投递实时策略候选到
 
 候选池由系统托管但按策略隔离，候选唯一键为 `(strategy_id, symbol, side)`。同一 symbol 可以同时被不同策略或不同方向选中；完整行情订阅由系统按 symbol/dependency 合并，方向冲突交给 risk/execution。
 
+## 🔴 策略源码禁止主动调用 API
+
+策略实现文件（尤其是 `strategy/strategies/candidates/*.py`）只能消费运行时传入的数据：
+
+- `discover(universe)` 只能读取 `universe`。
+- `build_signals_from_context(context)` 只能读取 `context`。
+- 账户、持仓、预算、风险限制、symbol metadata、owner/runtime 状态等信息，只能来自系统注入的 `context`、NATS context delta 或后端缓存/数据库链路。
+
+**严禁**在策略源码里使用 `requests`、`urllib`、`httpx`、`aiohttp`、Binance SDK/REST、Agent API、网页 API 或任何网络请求去查询账户、持仓、余额、预算、position risk、exchange info 或策略上下文。也不要在策略里调用 `/api/v1/agent/strategy/context/*`。
+
+如果策略缺少账户/预算字段，正确做法是修运行时 context 生产链路或后端缓存读取链路，而不是让策略自己补查 API。策略层必须保持纯函数式、无网络副作用，避免生产环境触发 REST 频控、IP ban 或和 testnet/live 行为不一致。
+
 ## 开始前必须先做
 
 1. 确认项目根目录。优先使用当前工作区；否则读取 `ZUOGE_CRYPTO_PROJECT_ROOT`；目录内必须存在 `cmd/crypto-skill/main.go` 和 `strategy/runtime/strategy_sdk.py`。
