@@ -1,19 +1,21 @@
 # close_ratio 全平：单级止盈 `1.0` 哨兵值约定
 
-## 当前策略：单级全平（非阶梯）
+## 当前策略：2 级梯子，最后一档全平
 
-`basic_trade_params()` 构建**单 rung ladder**：
+`basic_trade_params()` 构建**2 rung ladder**：
 
 ```python
 # strategy_sdk.py basic_trade_params()
 "take_profit": {"mode": "ladder", "targets": [
-    {"price": fmt(tp2), "close_ratio": "1.0"}
+    {"price": fmt(tp1), "close_ratio": "0.5"},
+    {"price": fmt(tp2), "close_ratio": "1.0"},
 ]}
 ```
 
-`close_ratio: "1.0"` 是哨兵值，触发 Binance `ClosePosition=true` 原生全平，不计算数量。
+- 第一档 `close_ratio: "0.5"`：平 50% 当前持仓量
+- 第二档 `close_ratio: "1.0"`：**哨兵值**，触发 Binance `ClosePosition=true` 原生全平
 
-策略层配合：`_apply_position_management` 设 `allow_partial_exit: False`。
+⚠️ `close_ratio: "1.0"` 本身已经保证最后一档全部清仓——**不要**因为误解把 2 级梯子改成 1 级。`allow_partial_exit` 设为 `is_ladder`（基于 `take_profit.mode == "ladder"` 自动推导），允许止盈单部分成交，与全平不冲突。
 
 ## 执行端 `close_ratio=1.0` 的处理
 

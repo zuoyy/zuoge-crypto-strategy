@@ -1,6 +1,6 @@
 # 信号推送被拒诊断参考
 
-诊断日期：2026-05-14。策略 `workflow_distilled_funnel` 产生的 286 条信号 100% 被拒。
+诊断日期：2026-05-14（首次），2026-05-19（更新：账户配置、intent 格式、加权 RR）
 
 ## 信号链路全貌
 
@@ -247,19 +247,32 @@ risk_limits: {"min_leverage": "5", "max_leverage": "20", ...}
 
 ## 风控层拒绝：`min_reward_risk` — 盈亏比低于执行门槛
 
-### 计算逻辑
+### 加权平均 RR 计算（2026-05-19 发现）
 
-Go 风控检查（`internal/risk/service.go`）：
-```go
-if proposal.RewardRiskRatio(entryPrice).LessThan(
-    proposal.TradeParams.ExecutionConstraints.MinRewardRisk) {
-    reasons = append(reasons, Reason{RuleID: "min_reward_risk", ...})
+**症状**：策略正常产生 SIGNAL，但 signals 表全部 `status=rejected`，`error_message` 为空，`strategy_signal_rejects` 无对应记录。
+**原因**：TP 梯子是两档（TP1 @ 1.5x + TP2 @ reward_risk），每档 50% 仓位。
+`execution_constraints.min_reward_risk` 被设为 `reward_risk`（如 2.2），但实际加权平均为 `1.5×0.5 + 2.2×0.5 = 1.85`。后端验证 `1.85 < 2.2` → 全部拒绝。
+
+**诊断**：从 strategy_decision_logs 看到 SIGNAL → signals 表 status=rejected → 检查 trade_params 中的梯子价格和 min_reward_risk 约束。
+
+**修复**：在 `basic_trade_params()` 中计算加权平均 RR，用作执行约束：
+
+```python
+tp1_ratio = 1.5  # 硬编码，保持两档梯子
+ladder_weighted_rr = tp1_ratio * 0.5 + reward_risk * 0.5
+
+"execution_constraints": {
+    "min_reward_risk": fmt(ladder_weighted_rr),  # 而非 fmt(reward_risk)
+    ...
 }
 ```
 
-使用 **第一个 TP 目标** 计算 reward:risk，与 `execution_constraints.min_reward_risk` 比较。
+修复后：`reward_risk=2.0` → `min_reward_risk=1.75` ✅，`reward_risk=2.2` → `min_reward_risk=1.85` ✅。  
+详见 [references/reward-risk-ladder-mismatch.md](references/reward-risk-ladder-mismatch.md)。
 
-### 量化如何破坏盈亏比（三重合击）
+### 历史记录：tick_size 量化破坏盈亏比（2026-05-14，已修复）
+
+> 以下内容保留供历史参考。当前代码已包含 actual_risk 和 min_value 保护。
 
 **击 1 — TP 距离不匹配**：`basic_trade_params` 原用 `stop_distance * 1.5` 算 tp1，但 `min_reward_risk` 常设为 2.2 → tp1 仅在 1.5R 处，不满足约束。
 
@@ -267,25 +280,7 @@ if proposal.RewardRiskRatio(entryPrice).LessThan(
 
 **击 3 — 止盈量化被吃掉**：即使 TP 按实际风险算，粗 tick_size ROUND_DOWN 又吃掉关键比例。KITEUSDT 示例：tp1 从 0.247 量化到 0.24，ratio 从 2.2 掉到 1.53。
 
-### 修复
-
-SDK `basic_trade_params()` 三步修复：
-
-1. **tp1_ratio**：`tp1_ratio = max(reward_risk, 1.5)` — tp1 至少满足 min_reward_risk
-2. **actual_risk**：`actual_risk = max(price - stop_price, stop_distance)` — 用量化后真实止损距离
-3. **min_value 保护**：`_quantized_or_fallback(value, fallback, ..., min_value=tp1_min)` — 量化后不满足最小值时回退到未量化值
-
-```python
-actual_risk = max(price - stop_price, stop_distance)
-tp1_min = price + actual_risk * tp1_ratio
-tp1 = _quantized_or_fallback(
-    price + actual_risk * tp1_ratio,
-    price * (1.0 + tp1_ratio * stop_pct),
-    context,
-    min_above=price,
-    min_value=tp1_min,  # 防止量化吃掉关键比例
-)
-```
+**修复（已实施）**：`actual_risk = max(price - stop_price, stop_distance)` + `min_value 保护`。
 
 ## 风控决策表查询
 

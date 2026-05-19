@@ -31,17 +31,44 @@ Fallback: neutral_probe      (-3 penalty) — 兜底，大概率被拒
 
 ## signed_change 方向约定
 
-```
+```python
 direction = 1.0 if side == "long" else -1.0
 signed_change = change * direction
 ```
 
-- Long on -8% 币：signed_change = -8%（负 = 逆方向）
-- Short on +8% 币：signed_change = +8%（正 = 逆方向，因为 short 方向是 -1）
+- Long on -8% 币：signed_change = +8% * (-1) = -8%（负 = 逆方向，币跌越多越负）
+- Short on +8% 币：signed_change = +8% * (-1) = -8%（负 = 逆方向，币涨越多越负）
+- **不要混淆**：signed_change 的符号只反映方向变换的结果，**不要直接用 > 5 判断反转**
 
-所以 reversal 判断：
-- Long reversal: signed_change < -5（币跌了 5%+）
-- Short reversal: signed_change > 5（币涨了 5%+）
+⚠️ 常见误解：认为 short reversal 需要 `signed_change > 5`。实际上代码中的写法是 `signed_change < -5.0`——对于 short（direction=-1），change=+5% → signed_change=-5.0，所以 `< -5.0` 等价于「币涨了 5%+」。
+
+```python
+# Code 中的写法：
+if signed_change < -5.0 and ...:  # 币涨了 5%+（对 short 方向 = 逆势超5%）
+    return "deep_reversal"
+```
+
+所以 reversal 判断统一为 **`signed_change < -N`**，不管做多还是做空：
+- Long reversal: signed_change < -5（币跌了 5%+，逆 long 方向超5%）
+- Short reversal: signed_change < -5（币涨了 5%+，逆 short 方向超5%）
+
+## directional_book 方向约定
+
+```python
+directional_book = book_imbalance * direction
+```
+
+- Long: direction=+1 → directional_book>0 = buyers dominate（买盘主导，确认入场安全）
+- Short: direction=-1 → directional_book>0 = sellers dominate → **坑**！这要求卖方已主导
+
+**⚠️ 反转做空必须用 `directional_book < -0.02`（买方仍主导），不等 book 翻盘。**
+反转做空的语义是在拉升顶部买盘最狂热时入场，不是等卖盘接手。
+
+| Stage | Long | Short |
+|-------|------|-------|
+| deep_reversal | `directional_book > 0.02`（买入主导） | **`directional_book < -0.02`**（买盘仍主导，摸顶） |
+| pullback_reversal | `directional_book > 0.01`（买入逐渐出现） | **`directional_book < -0.01`**（买盘仍主导） |
+| trend_continuation | `directional_book > 0.0` | `directional_book < 0.0`（卖盘主导） |
 
 ## 效果
 

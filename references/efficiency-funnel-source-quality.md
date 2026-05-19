@@ -65,6 +65,29 @@ score < 55 → 不进入候选池
 
 这可以砍掉进入 context 后被 `book_not_supporting_*` 拒绝的大量 candidate。
 
+### 5. 持仓感知候选池缩减
+
+当仓位已满（≥ MAX_DIRECTIONAL_POSITIONS）时，discover() 只需保留最小候选池用于轮换：
+
+```python
+def _discover_limit(self) -> int:
+    cache_ts, cache_data, cache_fit = self._positions_cache
+    if not cache_data:
+        return 8
+    open_positions_count = sum(1 for pos in cache_data if self._position_is_open(pos))
+    if open_positions_count >= MAX_DIRECTIONAL_POSITIONS:
+        return 2  # minimal pool: only best candidates for rotation
+    return 8
+```
+
+### 6. 已持仓 symbol 跳过
+
+discover() 通过 `_positions_cache` 检查目标 symbol+side 是否已持有。如果已持有且后端不允许加仓（`max_add_count=0`），直接跳过。详见 [references/discover-position-blindness.md](references/discover-position-blindness.md)。
+
+### 7. 亏损平仓硬冷却
+
+已关闭的亏损仓位所在 symbol 进入 15-30 分钟硬冷却，期间 discover() 不产出任何该 symbol 的候选。详见 [references/position-time-stop-cooldown.md](references/position-time-stop-cooldown.md)。
+
 ## 不要做的事
 
 - **不要在 context 评估阶段加更多 gate** — gate 越严，decision log 越多（每条拒绝都写一条 log），效率更低

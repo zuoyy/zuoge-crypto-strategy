@@ -26,32 +26,34 @@
 - 轮换门槛 85 → 永远不触发
 - 轮换逻辑 = 死代码
 
-## 修复方向
+## 修复方案（已部署）
 
-### ❌ 不加：降低绝对阈值
-```python
-if state["score"] < 82:  # 从 85 降到 82
-```
-问题：弱信号也轮换 → 频繁换仓 → 手续费磨损
+### ✅ 采用：PnL-梯度 + 阶段感知（2026-05-17）
 
-### ✅ 应做：相对质量比较
 ```python
-# 新信号 vs 最弱持仓的入场分 + 浮盈补偿
-quality_gap = state["score"] - weakest_entry_score
-min_pnl_pct = weakest_pnl_pct  # 已有浮盈
-if quality_gap > 5 and min_pnl_pct > 0.5:
-    rotate()
-```
-核心原则：**新信号必须显著优于旧仓位的进场质量，且旧仓位已有浮盈可落袋。**
+# Gradient: the more profit we're giving up, the lower the replacement bar
+if weakest_pnl_pct < 2.0:
+    required_score = 84.0      # 小盈 → 需要显著改善
+elif weakest_pnl_pct < 5.0:
+    required_score = 82.0      # 中等盈 → 任意过门信号即可
+else:
+    required_score = 80.0      # 大盈 → 放手轮换
 
-### 变体：阶段加权比较
-```python
-stage_weights = {"deep_reversal": 1.5, "pullback_reversal": 1.3, "trend_continuation": 1.1, ...}
-new_quality = state["score"] * stage_weights.get(state["stage"], 1.0)
-old_quality = weakest_entry_score * stage_weights.get(weakest_entry_stage, 1.0)
-if new_quality > old_quality * 1.15 and weakest_pnl_pct > 0.5:
-    rotate()
+# Stage-aware bonus: reversal stages have higher upside
+stage_bonus = 0.0
+if stage in ("deep_reversal", "pullback_reversal"):
+    stage_bonus = 2.0
+elif stage == "trend_continuation":
+    stage_bonus = 1.0
+
+effective_score = new_score + stage_bonus
+if effective_score < required_score:
+    return None  # not worth rotating
 ```
+
+**为什么不用 entry_score 比较**：position 表不存进场分，无法直接比较。用 PnL 幅度作为替代——浮盈越大，让出的机会成本越低。
+
+**为什么保留 `prefer <2.5%` 逻辑**：总是优先选最小盈仓换出（落袋为安），只在没有小盈仓时才换大盈仓。
 
 ## 验证方法
 

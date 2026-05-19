@@ -11,6 +11,7 @@
 4. **Step 4**: 对照 stage 分类器——是否 90%+ 交易落入 `neutral_probe`
 5. **Step 5**: 加缺失的过滤器（超买/超卖、大趋势确认、市场 regime）
 6. **Step 6**: ⚠️ **查止损公式**——提取 `signal.payload_json` 中 `stop_price` 与 `price_ref` 的距离，若 < 1.5% 且杠杆 > 10x → 止损公式分母太大，修复后再调其他 gate。
+7. **Step 7**: 🔴 **全链路做多/做空对称性审计**——沿 discover → _stage → _trade_gate 逐层检查 long/short 条件是否对称，发现的不对称分为三类：代码不对称（如 setup_bias -4 vs +4）、gate 与用户理念冲突（如拦截了用户想要的涨后做空）、市场结构不对称（如 book gate 杀空 6:1）。详见下方「全链路对称性审计」。
 
 ## 诊断四步法 + 第七步
 
@@ -77,6 +78,64 @@ ORDER BY SUM(f.realized_pnl);
 
 `_stage()` 如果 90%+ 交易落入 `neutral_probe`，说明强 setup 条件太苛刻。
 逐一检查 `accepted_breakout`、`expansion_continuation`、`pullback_reaccept` 的触发条件是否与实际行情匹配。
+
+## 全链路做多/做空对称性审计
+
+当策略有做多和做空两个方向时，必须逐层审计全链路对称性。不要只看 gate——从候选发现到阶段分类到评分到门控，每一层都可能存在不对称。
+
+### 审计三层
+
+**第一层：discover() — 候选池对称性**
+
+检查 `_universe_setups()` 中 long/short 候选的 `setup_bias` 是否对等。典型问题：
+
+```python
+# ❌ 不对称：动量方向 +4，反转方向 -4，差距 8 分出局
+if change > 0:
+    setups.append(("long",  "pullback_long",  4.0))   # 动量
+    setups.append(("short", "reversal_short", -4.0))   # 反转 → 几乎选不上
+```
+
+修复：反转候选至少设为 0（中性），让 volume/move/funding 决定分数。
+
+**第二层：_stage() — 阶段分类器对称性**
+
+逐一检查每个 stage 的 long/short 触发条件：
+- `deep_reversal`: 条件是否镜像对称（long 超卖 vs short 超买）
+- `pullback_reversal`: 同上
+- `trend_continuation`: signed_change 范围是否对等
+- `breakout`: 是否有两条独立路径还是共用一个（book>0.10 对 short 极难达到）
+- `early_trend`: 是否只覆盖 signed_change>0（漏掉了反方向 mild 机会）
+
+**第三层：_trade_gate() — 门控对称性**
+
+- **代码层**：检查每个 gate 是否有方向专用代码（`if side == "short"`），这些容易产生不对称
+- **数据层**：即使代码对称，市场结构也可能导致不对称。典型：`book_not_supporting_short` 6x `book_not_supporting_long`。这是买方盘口天然偏正导致的，不代表 gate 有 bug
+- **理念层**：gate 是否与用户交易哲学冲突？例：用户理念是"涨后做空"，但 `side=="short" and signed_change < -8` 恰恰拦截了这个场景
+
+### 实战案例（2026-05-18）
+
+workflow_distilled_funnel 审计发现做空三大问题：
+
+| # | 位置 | 问题 | 修复 |
+|---|------|------|------|
+| 1 | `_universe_setups` | 反转候选 -4 bias，在 top-8 排序中无法出线 | -4 → 0 |
+| 2 | `_trade_gate` Gate 2 | `do_not_chase_dump` 拦截了"涨后做空"（违背用户理念） | 删除 Gate |
+| 3 | `_trade_gate` book gate | ±0.03 杀空 6:1（市场结构不对称），放宽补偿 | ±0.03 → ±0.05 |
+
+### 诊断 SQL
+
+```sql
+-- 按方向分的 gate 拒绝率
+SELECT
+  CASE WHEN decision_logs.evidence_json->>'side' = 'short' THEN 'SHORT' ELSE 'LONG' END as dir,
+  reason, COUNT(*) as cnt
+FROM strategy_decision_logs
+WHERE strategy_id = 'workflow_distilled_funnel'
+  AND created_at > now() - interval '30 minutes'
+  AND decision = 'NO_TRADE'
+GROUP BY 1, reason ORDER BY cnt DESC;
+```
 
 ## 第一次优化（2026-05-15）
 
