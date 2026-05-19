@@ -9,11 +9,14 @@
 | 版本 | intent 值 | 结果 |
 |------|-----------|------|
 | 旧版 `_intent_for_owned_position` | `open_new_position` / `add_position` / `reverse_position` | ❌ `invalid_intent` |
-| 新版（用户修正） | `OPEN_LONG` / `OPEN_SHORT` / `REVERSE_LONG` / `REVERSE_SHORT` | ⚠️ 与 SDK 的 `intent_for_side()` 返回值一致 |
+| 当前策略推荐 | `open_long` / `open_short` / `close_long` / `close_short` / `reverse_long` / `reverse_short` | ✅ Go ingress 会做 `strings.ToUpper()` 后映射 |
+| Go 合约常量 | `OPEN_LONG` / `OPEN_SHORT` / `CLOSE_LONG` / `CLOSE_SHORT` / `REVERSE_LONG` / `REVERSE_SHORT` | ✅ 后端也兼容，但 Python 策略侧统一用小写，避免历史 payload 被错误丢弃 |
 
 ## 注意
 
-SDK 的 `intent_for_side()` 和 `close_intent_for_side()` 也返回大写格式（`"OPEN_LONG"`、`"CLOSE_LONG"`）。Go 后端是否接受这些值取决于后端版本。
+当前 Python `strategy_sdk.intent_for_side()`、`close_intent_for_side()` 以及 `workflow_distilled_funnel._intent_for_owned_position()` 返回小写 intent。不要再生成 `open_new_position`、`add_position`、`reverse_position` 这类旧格式。
+
+Go 侧 `mapIntent()` 会把 intent `strings.ToUpper()` 后匹配合约常量，所以小写和大写都能识别；策略侧为保持 payload 一致，统一使用小写。
 
 排查时，对比：
 ```sql

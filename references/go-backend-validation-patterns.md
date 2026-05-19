@@ -22,8 +22,8 @@ grep -rn "mapIntent\|func.*[Ii]ntent" internal/strategyingress/
 # 信号验证
 grep -rn "func.*[Vv]alidat" internal/strategyingress/
 
-# TP 梯子处理
-grep -rn "take_profit\|TakeProfit\|reward_risk" internal/worker/
+# TP / RR / 信号执行处理
+grep -rn "take_profit\|TakeProfit\|reward_risk\|min_reward_risk" internal/signal internal/risk internal/execution
 
 # 止损处理
 grep -rn "stop_loss\|StopLoss\|stop_price" internal/
@@ -33,10 +33,11 @@ grep -rn "stop_loss\|StopLoss\|stop_price" internal/
 
 | 校验点 | 位置 | 行为 |
 |-------|------|------|
-| RewardRiskRatio | `internal/worker/` | 只用 TP1（第一档止盈）的 RR 与 `min_reward_risk` 比较 |
+| RewardRiskRatio | `internal/signal` / `internal/risk` / `internal/execution` | 以当前 Go 源码为准；不要假设旧 worker 包仍存在 |
 | Intent 映射 | `internal/strategyingress/service.go` | `mapIntent()` 函数 |
 | 信号验证 | `internal/strategyingress/service.go` | 格式验证、字段完整性 |
-| 账户上下文 | `internal/strategyingress/` | 检查 `strategy_risk_allocations` |
+| 账户上下文 | `internal/realtimemarket` / `internal/risk` | 策略 context 和风险评估会使用 `strategy_risk_allocations` / `strategy_account_fit` |
+| 复盘上下文 | `pkg/contracts/strategy_signal.go` / `internal/strategyingress/service.go` / `internal/signal/proposal.go` | `review_context` 会进入 `signals.payload_json.review_context`，用于 AI 复盘归因 |
 
 ## Worker 独立进程
 

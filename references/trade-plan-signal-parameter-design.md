@@ -156,7 +156,7 @@ class Strategy:
   "strategy_version": "0.1.0",
   "context_id": "ctx-20260514010101",
   "symbol": "BTCUSDT",
-  "intent": "OPEN_LONG",
+  "intent": "open_long",
   "price_ref": "63540",
   "quote_side": "ask",
   "market_seq": 123456,
@@ -167,6 +167,7 @@ class Strategy:
   "expire_ms": 15000,
   "confidence": "0.82",
   "reason": "accepted_breakout long score=82.1 spread_bps=4.2",
+  "review_context": {},
   "trade_params": {},
   "data_dependencies": {
     "l1_book": "2026-05-14T01:01:00.958Z",
@@ -188,7 +189,7 @@ class Strategy:
 | `strategy_version` | 是 | 当前策略版本。 |
 | `context_id` | 是 | 从 `context.context_id` 传递。 |
 | `symbol` | 是 | 从 `context.symbol` 传递。 |
-| `intent` | 是 | `OPEN_LONG`、`OPEN_SHORT`、`CLOSE_LONG`、`CLOSE_SHORT`、`REVERSE_LONG`、`REVERSE_SHORT`。常规开仓/反手可用 `strategy_sdk.intent_for_side(side, context)`。 |
+| `intent` | 是 | 策略侧统一使用小写：`open_long`、`open_short`、`close_long`、`close_short`、`reverse_long`、`reverse_short`。Go ingress 会转大写后映射；不要使用旧的 `open_new_position` / `add_position` / `reverse_position`。 |
 | `price_ref` | 是 | 当前 signal 的报价参考。多头通常 ask，空头通常 bid。 |
 | `quote_side` | 是 | `bid`、`ask`、`mid` 或 `mark`。多头开仓通常 `ask`，空头开仓通常 `bid`。 |
 | `market_seq` | 是 | 从 context 传递，必须大于 0。ingress 会拒绝太旧的序号。 |
@@ -199,6 +200,7 @@ class Strategy:
 | `expire_ms` | 是 | signal 有效毫秒数，短线常用 `15000`。 |
 | `confidence` | 否 | 字符串小数或 JSON number，范围 `0..1`。省略时后端按 `0` 处理，可能被风控阈值拒绝；策略信号建议总是填写。 |
 | `reason` | 是 | 简明交易理由，最多 500 字符。ingress 会映射成内部 `signal_reason`，为空会被 Go signal validator 拒绝。 |
+| `review_context` | 否 | 给 AI 复盘使用的结构化上下文。开仓可为空；平仓/反手/轮动建议填写 `event_type`、`exit_reason_code`、持仓时间、盈亏、触发阈值等可检索字段。 |
 | `trade_params` | 是 | 完整交易计划，见下文。 |
 | `data_dependencies` | 否 | 依赖时间审计信息，值必须是 RFC3339 时间戳字符串；不要填毫秒 age 字符串。 |
 | `trace_id` | 是 | 链路追踪 ID，由 `signal_envelope` 生成。 |
@@ -222,18 +224,63 @@ ingress 会用这些实时字段做最后防线：
 
 | `intent` | `side` | 内部 `position_intent` |
 | --- | --- | --- |
-| `OPEN_LONG` | `long` | `open` |
-| `OPEN_SHORT` | `short` | `open` |
-| `CLOSE_LONG` | `long` | `close` |
-| `CLOSE_SHORT` | `short` | `close` |
-| `REVERSE_LONG` | `long` | `reverse` |
-| `REVERSE_SHORT` | `short` | `reverse` |
+| `open_long` / `OPEN_LONG` | `long` | `open` |
+| `open_short` / `OPEN_SHORT` | `short` | `open` |
+| `close_long` / `CLOSE_LONG` | `long` | `close` |
+| `close_short` / `CLOSE_SHORT` | `short` | `close` |
+| `reverse_long` / `REVERSE_LONG` | `long` | `reverse` |
+| `reverse_short` / `REVERSE_SHORT` | `short` | `reverse` |
 
 策略通常不直接填写旧 proposal 顶层的 `position_intent`、`replace_existing_position`、`skill_name`、`created_at`、`expires_at`。这些由 ingress 根据 `StrategySignalEvent` 转换或生成。
 
 如果当前 context 表示已有反向持仓，`strategy_sdk.intent_for_side(side, context)` 会生成 reverse intent。策略必须确认这是明确反手逻辑，不能因为 side 冲突就盲目交易。
 
-## 6. trade_params 总结构
+## 6. review_context 复盘上下文
+
+`review_context` 是给 AI 复盘和归因使用的结构化字段，会随 signal 进入 `signals.payload_json.review_context`。它不是交易执行参数，不参与风控计算，但应保持稳定、可检索、可聚合。
+
+平仓类信号建议至少包含：
+
+```json
+{
+  "event_type": "position_exit",
+  "exit_reason_code": "time_stop",
+  "position_side": "long",
+  "held_minutes": 245.3,
+  "max_holding_minutes": 240,
+  "unrealized_pnl": "-2.15",
+  "notional": "120.0",
+  "loss_pct": "0.0179",
+  "min_time_stop_loss_pct": "0.015",
+  "time_stop": {
+    "enabled": true,
+    "max_holding_minutes": 240
+  }
+}
+```
+
+推荐 `exit_reason_code`：
+
+- `time_stop`
+- `stop_loss`
+- `trailing_stop`
+- `take_profit`
+- `opposite_signal_losing`
+- `rotation`
+- `manual_or_external`
+
+复盘查询示例：
+
+```sql
+SELECT signal_id, symbol, side, status, signal_reason,
+       payload_json->'review_context' AS review_context,
+       created_at
+FROM signals
+WHERE payload_json->'review_context'->>'exit_reason_code' = 'time_stop'
+ORDER BY created_at DESC;
+```
+
+## 7. trade_params 总结构
 
 `trade_params` 是 `StrategySignalEvent` 内嵌的正式交易计划。它会被 ingress 原样解码成内部 `signal.TradeParams`，再交给 signal validator、risk 和 execution。
 
@@ -252,7 +299,7 @@ ingress 会用这些实时字段做最后防线：
 
 所有价格、金额、数量和比例建议用字符串小数或 JSON number；Go 端 `decimal.Decimal` 可解析字符串小数。百分比字段用小数表达：`0.02` 表示 2%，`0.003` 表示 0.3%。
 
-## 7. entry 入场计划
+## 8. entry 入场计划
 
 `entry` 描述何时触发、用什么订单类型、有效多久。
 
@@ -305,7 +352,7 @@ ingress 会用这些实时字段做最后防线：
 4. `entry.trigger.trigger_range` 中点
 5. signal 顶层 `price_ref`
 
-## 8. exits 退出计划
+## 9. exits 退出计划
 
 `exits` 必须包含：
 
@@ -382,9 +429,20 @@ ingress 会用这些实时字段做最后防线：
 }
 ```
 
-启用时必须有正整数 `max_holding_minutes`。
+启用时必须有正整数 `max_holding_minutes`。这是信号传递的持仓上限，不应在持仓管理逻辑里再写隐藏常量。开仓信号的 `trade_params.exits.time_stop.max_holding_minutes` 会随原始信号入库；持仓 runtime 回灌到策略 context 时，应通过 `owner_runtime.time_stop.max_holding_minutes` 读取。
 
-## 9. sizing 仓位大小
+策略侧时间止损应只管理本策略拥有的仓位，并写清复盘字段：
+
+- 超时阈值：`max_holding_minutes`
+- 实际持仓：`held_minutes`
+- 当前盈亏：`unrealized_pnl`
+- 亏损比例：`loss_pct`
+- 触发门槛：例如 `min_time_stop_loss_pct`
+- 原始 time stop plan：`time_stop`
+
+`workflow_distilled_funnel` 当前专业口径：超过信号传入的持仓时间后，不因微亏/浮盈机械平仓；只有亏损达到策略设置的有效亏损阈值时才触发 `exit_reason_code=time_stop`。
+
+## 10. sizing 仓位大小
 
 `sizing` 是正式下单规模请求，不是备注。
 
@@ -412,7 +470,7 @@ ingress 会用这些实时字段做最后防线：
 
 策略应从 `context.strategy_account_fit`、`context.risk_limits` 和 `context.symbol_metadata` 推导仓位，不要写死超出策略资金池/风控能力的金额。
 
-## 10. margin 杠杆
+## 11. margin 杠杆
 
 当前默认只支持 cross：
 
@@ -430,7 +488,7 @@ ingress 会用这些实时字段做最后防线：
 - `close` 不能带 leverage。
 - 如果策略省略 leverage，validator 可使用运行时默认杠杆。
 
-## 11. position_management
+## 12. position_management
 
 ```json
 {
@@ -447,10 +505,10 @@ ingress 会用这些实时字段做最后防线：
 - 普通开仓默认 `allow_add_position=false`。
 - `allow_add_position=false` 时 `max_add_count=0`。
 - `take_profit.mode=ladder` 时 `allow_partial_exit=true`。
-- `allow_reverse_on_opposite_signal` 是未来运行时偏好，不代表当前 signal 的反手授权；当前反手由 `StrategySignalEvent.intent=REVERSE_LONG/REVERSE_SHORT` 表达。
+- `allow_reverse_on_opposite_signal` 是未来运行时偏好，不代表当前 signal 的反手授权；当前反手由 `StrategySignalEvent.intent=reverse_long/reverse_short` 表达。
 - `same_symbol_cooldown_minutes` 是本计划退出后的同标的冷却时间。
 
-## 12. execution_constraints
+## 13. execution_constraints
 
 ```json
 {
@@ -468,9 +526,9 @@ ingress 会用这些实时字段做最后防线：
 - `min_reward_risk` 使用第一个止盈目标和初始止损计算。
 - `quote_staleness_seconds` 约束可接受报价年龄，必须大于等于 0。高频信号建议 5-30 秒。
 
-⚠️ **close 信号必须带 execution_constraints**：即使 `stop_loss.mode=none`、`take_profit.mode=none`，close 信号（intent=CLOSE_LONG/CLOSE_SHORT）仍然需要 `execution_constraints.max_slippage_pct > 0`，否则 Go 后端会在 signal validation 阶段拒绝 `"price protection is required via acceptable_range or execution_constraints.max_slippage_pct"`。market close 信号建议 `max_slippage_pct: "0.003"`。
+⚠️ **close 信号必须带 execution_constraints**：即使 `stop_loss.mode=none`、`take_profit.mode=none`，close 信号（intent=`close_long`/`close_short`）仍然需要 `execution_constraints.max_slippage_pct > 0`，否则 Go 后端会在 signal validation 阶段拒绝 `"price protection is required via acceptable_range or execution_constraints.max_slippage_pct"`。market close 信号建议 `max_slippage_pct: "0.003"`。
 
-## 13. 推荐策略代码模式
+## 14. 推荐策略代码模式
 
 ```python
 def build_signals_from_context(self, context: dict) -> list[dict]:
@@ -531,7 +589,7 @@ def build_signals_from_context(self, context: dict) -> list[dict]:
     return [signal]
 ```
 
-## 14. 提交前自检清单
+## 15. 提交前自检清单
 
 AI 编写或修改策略后，必须逐项检查：
 
@@ -541,10 +599,12 @@ AI 编写或修改策略后，必须逐项检查：
 - `build_signals_from_context()` 先检查 warmup、context status、quote dependency。
 - signal 使用 `strategy_sdk.signal_envelope(...)` 生成。
 - signal 顶层有 `market_seq`、`quote_side`、`data_freshness_ms`、`max_data_age_ms`、`max_slippage_bps`。
+- 平仓、反手、轮动类 signal 填写 `review_context`，至少包含 `event_type` 和可枚举的 reason code。
 - `price_ref` 来自当前 context 的可执行报价，不是过期 K 线价或主观价。
 - `intent` 与 candidate side、当前持仓关系一致。
 - `trade_params.entry` 有触发条件、订单类型、有效期和价格保护。
 - `trade_params.exits` 有可计算止损；`risk_budget` 不搭配 `stop_loss.mode=none`。
+- `time_stop.max_holding_minutes` 来自信号计划；持仓管理读取 `owner_runtime.time_stop`，不要隐藏写死 60/240 分钟。
 - 多头止损低于入场参考价，止盈高于入场参考价；空头相反。
 - ladder 止盈方向正确，最后一档 `close_ratio=1.0`（全平剩余），非最后目标 close_ratio 总和不超过 1。
 - `sizing` 的目标字段与 `mode` 匹配，min/max 范围不冲突。
@@ -553,12 +613,12 @@ AI 编写或修改策略后，必须逐项检查：
 - `execution_constraints.max_slippage_pct` 与 signal 顶层 `max_slippage_bps` 不冲突。
 - 无交易时也写 `decision_logs`，决策值使用 `NO_TRADE`、`WAIT_WARMUP`、`DEGRADED_SKIP` 或 `VALIDATION_FAILED`。
 
-## 15. 最简口径
+## 16. 最简口径
 
 AI 只需要记住：
 
 - `discover()` 负责从全市场轻量数据挑候选和声明依赖。
 - 系统负责候选池、行情订阅、依赖预热和 context 投递。
 - `build_signals_from_context()` 负责把已预热 context 转成 `StrategySignalEvent`。
-- `StrategySignalEvent` 顶层描述实时性、方向、报价和审计；`trade_params` 描述入场、退出、仓位、杠杆、持仓管理和执行约束。
+- `StrategySignalEvent` 顶层描述实时性、方向、报价和审计；`review_context` 描述给 AI 复盘的结构化归因；`trade_params` 描述入场、退出、仓位、杠杆、持仓管理和执行约束。
 - AI 不直接提交旧 proposal，不发布 NATS，不绕过 strategyingress/risk/execution。
