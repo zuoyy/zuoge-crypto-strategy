@@ -64,7 +64,7 @@ description: "用于编写、校验、回测并自动投递实时策略候选到
 
 ### 🔴 方向变换值验证（最高优先级）
 
-`directional_book` 和 `signed_change` 经过 `direction`（long=+1, short=-1）变换后，比较运算符语义可能反转。语法对称 ≠ 语义正确。**每次涉及这些值的审查必须执行三步验证**：写出原始语义 → 方向变换 → 验证代码。详见 [references/directional-sign-verification.md](references/directional-sign-verification.md)。
+`directional_book` 和 `signed_change` 经过 `direction`（long=+1, short=-1）变换后，比较运算符语义可能反转。语法对称 ≠ 语义正确。**每次涉及这些值的审查必须执行三步验证**：写出原始语义 → 方向变换 → 验证代码。
 
 **诊断信号**：当某一侧 100% 落在 `neutral_probe` 阶段时，立即怀疑方向条件写反：
 
@@ -79,15 +79,15 @@ GROUP BY stage;
 
 常见结构性陷阱：
 - **`_stage()` 做空 reversal 条件写反**：注释写「币涨 5%+」但 `signed_change > 5` 对做空 = 币跌 5%。正解为 `signed_change < -5.0`。
-- **`_stage()` reversal book 时机偏晚**：`directional_book > 0.02` 要求卖方已主导才入场做空 reversal，但真 reversal 应在买方仍主导时早入场（`directional_book < -0.02`）。等 book 翻转了才入场说明 reversal 已过半。详见 [references/stage-reversal-book-timing.md](references/stage-reversal-book-timing.md)。
-- **`_stage()` long 侧 reversal 条件同样偏晚**：long deep_reversal 要求 `directional_book > 0.02 and pos_1h < 0.25`——深跌 28% 的币 book 自然极卖空（db=-0.35~-0.45），且在 1h candle 内反弹后 pos_1h 可达 0.8+。条件永不过，应放宽到 `db > -0.35 and pos_1h < 0.80`。详见 [references/stage-reversal-book-timing.md](references/stage-reversal-book-timing.md)。
+- **`_stage()` reversal book 时机偏晚**：`directional_book > 0.02` 要求卖方已主导才入场做空 reversal，但真 reversal 应在买方仍主导时早入场（`directional_book < -0.02`）。等 book 翻转了才入场说明 reversal 已过半。
+- **`_stage()` long 侧 reversal 条件同样偏晚**：long deep_reversal 要求 `directional_book > 0.02 and pos_1h < 0.25`——深跌 28% 的币 book 自然极卖空（db=-0.35~-0.45），且在 1h candle 内反弹后 pos_1h 可达 0.8+。条件永不过，应放宽到 `db > -0.35 and pos_1h < 0.80`。
 - **`_trade_gate()` book gate 做空写反**：`directional_book > 0.05` 拒做空→卖方主导被误杀。正解为 `< -0.05`（买方主导时拒）。
-- **`_funding_penalty` 方向写反**：正资金费 = longs pay shorts，对做空有利。`funding > 0.0015 AND side=="short"` 是错误惩罚——正资金费该罚做多。正解：`side=="long" AND funding > 0.0015` 罚做多，`side=="short" AND funding < -0.0015` 罚做空。详见 [references/directional-sign-verification.md](references/directional-sign-verification.md) 的 funding_penalty 案例。
-- **`neutral_probe` 止损放大→止盈膨胀**：`stop_pct × 1.5` 后 TP = stop × 1.5/2.2，导致止盈距离翻倍。详见 [references/neutral-probe-stop-amplification.md](references/neutral-probe-stop-amplification.md)。
-- **`flow_score` 奖励追涨**：`signed_change * N` 线性系数让拉得最凶的币得最高分。应改为奖金衰减（≤5% 线性，5-15% 衰减到 0，≥15% 不奖）。参见 [references/change-bonus-pattern.md](references/change-bonus-pattern.md)。
-- **`_stage()` 方向错误——动量追涨而非反转抄底**：所有阶段都要求 `signed_change > 0`（币已按信号方向移动），本质是追涨杀跌。专业做法是反转优先：币大跌→抄底做多，币大涨→摸顶做空。详见 [references/reversal-first-stage-architecture.md](references/reversal-first-stage-architecture.md)。
+- **`_funding_penalty` 方向写反**：正资金费 = longs pay shorts，对做空有利。`funding > 0.0015 AND side=="short"` 是错误惩罚——正资金费该罚做多。正解：`side=="long" AND funding > 0.0015` 罚做多，`side=="short" AND funding < -0.0015` 罚做空。详见 的 funding_penalty 案例。
+- **`neutral_probe` 止损放大→止盈膨胀**：`stop_pct × 1.5` 后 TP = stop × 1.5/2.2，导致止盈距离翻倍。
+- **`flow_score` 奖励追涨**：`signed_change * N` 线性系数让拉得最凶的币得最高分。应改为奖金衰减（≤5% 线性，5-15% 衰减到 0，≥15% 不奖）。参见。
+- **`_stage()` 方向错误——动量追涨而非反转抄底**：所有阶段都要求 `signed_change > 0`（币已按信号方向移动），本质是追涨杀跌。专业做法是反转优先：币大跌→抄底做多，币大涨→摸顶做空。
 - **`candidate_score`/`move_score` 奖励大波动**：`log1p(abs(change))` 不区分方向，涨 20% 和跌 20% 得同分。
-- **flow_score 反转惩罚**：`flow_score = 50 + directional_book * 180 + change_bonus * 3` 本质动量跟随评分，反转候选的 directional_book 和 change_bonus 均逆向 → flow_score 打 20-30 分。即使 stage 分类正确（deep_reversal +10），总分也不到 trade gate 门槛 72。详见 [references/flow-score-reversal-handicap.md](references/flow-score-reversal-handicap.md)。
+- **flow_score 反转惩罚**：`flow_score = 50 + directional_book * 180 + change_bonus * 3` 本质动量跟随评分，反转候选的 directional_book 和 change_bonus 均逆向 → flow_score 打 20-30 分。即使 stage 分类正确（deep_reversal +10），总分也不到 trade gate 门槛 72。
 - **缺少超买/超卖过滤**：`position_in_range` 来自 1h/4h kline，>0.88 不做多，<0.12 不做空。
 - **缺少大趋势确认**：做多要求 4h `trend_return_pct > -1.5%`，做空要求 `< 1.5%`。
 - **缺少市场 regime**：BTC 跌 >1.5% 时不做多 alts；BTC 涨 >1.5% 时不追空。
@@ -158,19 +158,19 @@ GROUP BY stage;
 
 **第七轮（BTC regime 柔性化 + stage 多样性）：** BTC 跌 >1.5% 全杀 long 太粗糙。改为梯度惩罚：BTC 0-2% 不罚，2-5% 按比例扣 setup_bias（0→12），>5% 极端才全停。`sweep_reclaim` stage 从死代码复活（多头深跌+超卖+book 翻多，空头急涨+超买+book 翻空）。`early_trend` bonus 0→2，book ≥0.0→≥-0.01，且排在 trend_pressure_build 之后只捡 [0.2,0.5] 过渡区。pullback_reaccept book 0.05→0.03。
 
-**第八轮（flow_score 反转感知 + stage_bonus 重构）：** flow_score 对反转入场施加结构性惩罚（公式 `50 + directional_book*180 + change_bonus*3` 本质动量跟随）。修复：反转阶段用 abs() 代替原 directional_book 和 change_bonus，让逆向持仓系数变为加分。stage_bonus 同步拉高：deep_reversal +10→+15，pullback_reversal +7→+10。详见 [references/flow-score-reversal-handicap.md](references/flow-score-reversal-handicap.md)。
+**第八轮（flow_score 反转感知 + stage_bonus 重构）：** flow_score 对反转入场施加结构性惩罚（公式 `50 + directional_book*180 + change_bonus*3` 本质动量跟随）。修复：反转阶段用 abs() 代替原 directional_book 和 change_bonus，让逆向持仓系数变为加分。stage_bonus 同步拉高：deep_reversal +10→+15，pullback_reversal +7→+10。
 
-**第十轮（小账户激进步进 + 移动止盈收紧）：** 用户明确要求"以小博大"。3 次同时调整：(1) risk_pct base 1.0→2.0, coeff 0.06→0.08, max 3→8；(2) deep_reversal trailing_stop activation/trail_width 从 ×1.25 收紧至 ×0.5；(3) directional_pos 2→3 + opposite_side 豁免。详见 [references/trailing-stop-capture-pitfall.md](references/trailing-stop-capture-pitfall.md) 和 [references/position-gate-deadlock-reversal.md](references/position-gate-deadlock-reversal.md)。
+**第十轮（小账户激进步进 + 移动止盈收紧）：** 用户明确要求"以小博大"。3 次同时调整：(1) risk_pct base 1.0→2.0, coeff 0.06→0.08, max 3→8；(2) deep_reversal trailing_stop activation/trail_width 从 ×1.25 收紧至 ×0.5；(3) directional_pos 2→3 + opposite_side 豁免。
 
-**第九轮（亚洲盘分类器 + discover 效率 + 仓位管理）：** 数据驱动的大修。从 6.5M 决策日志/天分析发现三大问题并一次性修复。(1) **亚洲盘（09:00-17:00 北京）100% neutral_probe** → 放松 signed_change 阈值（5.0→2.5 reversal，3.0→1.5 breakout），详见 [references/asian-session-stage-classification.md](references/asian-session-stage-classification.md)。(2) **discover() 持仓盲视** → `_candidate_already_held()` 检查 `_positions_cache`，`max_add_count>0` 时放行让加仓门禁评估，详见 [references/discover-position-blindness.md](references/discover-position-blindness.md)。(3) **short 方向 4.5:1 偏斜** → `_enforce_side_balance()` 在 `_balanced_select()` 中每轮检查 side 分布，>70% 单边时强制补入少数方，详见 [references/discover-side-balancing.md](references/discover-side-balancing.md)。(4) **仓位满后候选浪费** → `_discover_limit()` 在持仓≥3 时 limit=2，详见 [references/efficiency-funnel-source-quality.md](references/efficiency-funnel-source-quality.md)。(5) **时间止损 + 硬冷却** → `_position_entry_at` 追踪开仓时间，>60min 无盈利强制平仓；`_hard_cooldown_until` 在亏损平仓后 15-30min 阻断该 symbol 候选，详见 [references/position-time-stop-cooldown.md](references/position-time-stop-cooldown.md)。
+**第九轮（亚洲盘分类器 + discover 效率 + 仓位管理）：** 数据驱动的大修。从 6.5M 决策日志/天分析发现三大问题并一次性修复。(1) **亚洲盘（09:00-17:00 北京）100% neutral_probe** → 放松 signed_change 阈值（5.0→2.5 reversal，3.0→1.5 breakout），(2) **discover() 持仓盲视** → `_candidate_already_held()` 检查 `_positions_cache`，`max_add_count>0` 时放行让加仓门禁评估，(3) **short 方向 4.5:1 偏斜** → `_enforce_side_balance()` 在 `_balanced_select()` 中每轮检查 side 分布，>70% 单边时强制补入少数方，(4) **仓位满后候选浪费** → `_discover_limit()` 在持仓≥3 时 limit=2，(5) **时间止损 + 硬冷却** → `_position_entry_at` 追踪开仓时间，>60min 无盈利强制平仓；后因 deep_reversal 需要更多时间验证底部放宽到 240min，再经 **生产持仓分析**（2026-05-19：ATUSDT deep_reversal +3.5% 证明 240min 合理，GOATUSDT/XVGUSDT breakout -2% 证明 240min 太长）收敛为 **stage 差异化**：deep_reversal=240min、breakout=120min、其他=180min。`_hard_cooldown_until` 在亏损平仓后 15-30min 阻断该 symbol 候选，
 
-**第十一轮（前置的持续优化）：** 固定周期检查 `strategy_decision_logs` 的 reason 分布，定位当前占比最高的瓶颈 gate，然后单点修复 → 重新观察 → 修复连锁反应。此方法比凭感觉调整更高效。详见 [references/gate-calibration-iterative.md](references/gate-calibration-iterative.md)。
+**第十一轮（前置的持续优化）：** 固定周期检查 `strategy_decision_logs` 的 reason 分布，定位当前占比最高的瓶颈 gate，然后单点修复 → 重新观察 → 修复连锁反应。此方法比凭感觉调整更高效。
 
-**第十二轮（信号冷却竞态 + 分数天花板 + 亚洲盘柔性）：** 生产运行发现 4 个隐藏漏洞：(1) **信号冷却竞态条件**——NATS 异步事件循环中多协程同时调用 `build_signals_from_context()`，所有协程在写 `_last_signal_symbol_at` 之前读取旧值，600 秒冷却完全失效，同一标的 5 分钟内连发 8 次信号。修复：`threading.Lock` 包裹冷却检查+记录，保证检查-写原子性。详见 [references/signal-cooldown-race-condition.md](references/signal-cooldown-race-condition.md)。(2) **score 天花板 100**——高分 deep_reversal 信号一律饱和在 100，无法区分 85 分和 105 分。修复：天花板提升到 120，confidence 上限同步到 0.98。(3) **亚洲盘 book gate 78% 误杀**——低频波纹态的 book_imbalance 噪音导致 `directional_book < 0` 频繁触发。修复：亚洲盘 book 门槛从 `0.0` 放宽到 `-0.015`。(4) **亚洲盘 score floor 过高**——`neutral_probe_too_weak` 拒绝 882 次/分。修复：亚洲盘 neutral_probe floor 85→82，stage floor 72→68。详见 [references/asian-session-stage-classification.md](references/asian-session-stage-classification.md)。
+**第十二轮（信号冷却竞态 + 分数天花板 + 亚洲盘柔性）：** 生产运行发现 4 个隐藏漏洞：(1) **信号冷却竞态条件**——NATS 异步事件循环中多协程同时调用 `build_signals_from_context()`，所有协程在写 `_last_signal_symbol_at` 之前读取旧值，600 秒冷却完全失效，同一标的 5 分钟内连发 8 次信号。修复：`threading.Lock` 包裹冷却检查+记录，保证检查-写原子性。(2) **score 天花板 100**——高分 deep_reversal 信号一律饱和在 100，无法区分 85 分和 105 分。修复：天花板提升到 120，confidence 上限同步到 0.98。(3) **亚洲盘 book gate 78% 误杀**——低频波纹态的 book_imbalance 噪音导致 `directional_book < 0` 频繁触发。修复：亚洲盘 book 门槛从 `0.0` 放宽到 `-0.015`。(4) **亚洲盘 score floor 过高**——`neutral_probe_too_weak` 拒绝 882 次/分。修复：亚洲盘 neutral_probe floor 85→82，stage floor 72→68。
 
-**第十三轮（独立持仓监控系统 discovery→gate 死代码修复）：** 分析发现 `_candidate_already_held()` 阻断了持仓退出的评估路径。`_maybe_close_position()`（时间止损、亏损退出、反方向退出）只在新候选通过 trade_gate 后触发——但 `_candidate_already_held()` 阻止了已持仓 symbol 产生任何候选 → 持仓管理全是死代码。修复：(1) discover() 完成后额外为每个持仓发出 `position_monitor` 候选（score=1, setup_id="position_monitor", ttl=15s），每 60s 限流一次；(2) `build_signals_from_context()` 在进入正常流程前检测 `setup_id == "position_monitor"` → 跳过 warmup/gate → 直接调用 `_maybe_close_position()`；(3) `_seed_entry_times()` 从 `execution_position_basis.updated_at` 还原 `_position_entry_at`（解决进程重启丢失时间）。详见 [references/position-management-dead-code.md](references/position-management-dead-code.md) 和 [references/position-monitoring-implementation.md](references/position-monitoring-implementation.md)。
+**第十三轮（独立持仓监控系统 discovery→gate 死代码修复）：** 分析发现 `_candidate_already_held()` 阻断了持仓退出的评估路径。`_maybe_close_position()`（时间止损、亏损退出、反方向退出）只在新候选通过 trade_gate 后触发——但 `_candidate_already_held()` 阻止了已持仓 symbol 产生任何候选 → 持仓管理全是死代码。修复：(1) discover() 完成后额外为每个持仓发出 `position_monitor` 候选（score=1, setup_id="position_monitor", ttl=15s），每 60s 限流一次；(2) `build_signals_from_context()` 在进入正常流程前检测 `setup_id == "position_monitor"` → 跳过 warmup/gate → 直接调用 `_maybe_close_position()`；(3) `_seed_entry_times()` 从 `execution_position_basis.updated_at` 还原 `_position_entry_at`（解决进程重启丢失时间）。
 
-**源头收紧 > gate 加码**：discover() 多放一个弱 candidate，context delta 每秒触发多次评估链。优先从源头砍弱 candidate（score floor、limit、动态 TTL），减少 context 评估总量。详见 [references/efficiency-funnel-source-quality.md](references/efficiency-funnel-source-quality.md)。
+**源头收紧 > gate 加码**：discover() 多放一个弱 candidate，context delta 每秒触发多次评估链。优先从源头砍弱 candidate（score floor、limit、动态 TTL），减少 context 评估总量。
 
 ### ⚠️ 修改后必须提交
 
@@ -213,14 +213,14 @@ cd /Users/zuo/.hermes/skills/zuoge-crypto-strategy && git add -A && git commit -
 >
 > **🔴 硬规则 7：策略代码禁止查询生产数据库。** 策略运行在 Python 进程中，不应包含 `subprocess`、`psycopg2` 或任何直接连接到数据库的代码。所有持仓、账户、风控数据必须通过 context overlay（Go 后端 → NATS → Strategy SDK）获取。策略诊断时可以通过 psql 命令行手动查询数据库作为外部工具，但策略自身的 `discover()` 或 `build_signals_from_context()` 代码中不得包含数据库查询。
 >
-> **🔴 硬规则 8：排查跨语言边界信号链时，先读 Go 源码，不要从 DB 日志反推后端行为。** Python 策略→NATS→Go ingress→DB 的信号链路中，后端验证逻辑在 Go 源码（`internal/strategyingress/service.go`、`internal/worker/`）中定义。**禁止**从 signals.status 或 strategy_signal_rejects 反推后端逻辑——你只能看到"被拒"的事实，看不到"为什么被拒"的源码逻辑。正确做法：`grep -rn "RewardRiskRatio\|mapIntent\|func.*validate" internal/` 定位相关函数直接读 Go 代码。详见 [references/go-backend-validation-patterns.md](references/go-backend-validation-patterns.md)。
+> **🔴 硬规则 8：排查跨语言边界信号链时，先读 Go 源码，不要从 DB 日志反推后端行为。** Python 策略→NATS→Go ingress→DB 的信号链路中，后端验证逻辑在 Go 源码（`internal/strategyingress/service.go`、`internal/worker/`）中定义。**禁止**从 signals.status 或 strategy_signal_rejects 反推后端逻辑——你只能看到"被拒"的事实，看不到"为什么被拒"的源码逻辑。正确做法：`grep -rn "RewardRiskRatio\|mapIntent\|func.*validate" internal/` 定位相关函数直接读 Go 代码。
 >
-> **🔴 硬规则 8：排查跨语言边界信号链时，先读 Go 源码，不要从 DB 日志反推后端行为。** Python 策略→NATS→Go ingress→DB 的信号链路中，后端验证逻辑在 Go 源码（`internal/strategyingress/service.go`、`internal/worker/`）中定义。**禁止**从 signals.status 或 strategy_signal_rejects 反推后端逻辑——你只能看到"被拒"的事实，看不到"为什么被拒"的源码逻辑。正确做法：`grep -rn "RewardRiskRatio\|mapIntent\|func.*validate" internal/` 定位相关函数直接读 Go 代码。详见 [references/go-backend-validation-patterns.md](references/go-backend-validation-patterns.md)。
+> **🔴 硬规则 8：排查跨语言边界信号链时，先读 Go 源码，不要从 DB 日志反推后端行为。** Python 策略→NATS→Go ingress→DB 的信号链路中，后端验证逻辑在 Go 源码（`internal/strategyingress/service.go`、`internal/worker/`）中定义。**禁止**从 signals.status 或 strategy_signal_rejects 反推后端逻辑——你只能看到"被拒"的事实，看不到"为什么被拒"的源码逻辑。正确做法：`grep -rn "RewardRiskRatio\|mapIntent\|func.*validate" internal/` 定位相关函数直接读 Go 代码。
 
 在项目根目录内工作：
 
 1. 需要运行态能力目录时，`crypto-skill capabilities show --format json`。
-2. 按需读取 [references/authoring-workflow.zh-CN.md](references/authoring-workflow.zh-CN.md)。
+2. 按需读取。
 3. `crypto-skill research create --focus "<研究目标>"`
 4. 基于 capabilities 和 SDK 编写候选策略到 `strategy/strategies/candidates/`。
 5. `crypto-skill candidate new --strategy <id> --version <x.y.z> --file <candidate.py> --research <research_id>`
@@ -247,8 +247,8 @@ cd /Users/zuo/.hermes/skills/zuoge-crypto-strategy && git add -A && git commit -
 - [ ] **硬冷却不阻断首次交易**：`discover()` 中 `_hard_cooldown_until` 初始化时 `{}`→第一次迭代正常通过。
 - [ ] **时间止损追踪正确**：`_position_entry_at` 只在 `not position["has_position"]`（新开仓）时记录，加仓时不覆盖。
 - [ ] **部署后验证**：`sql="SELECT reason, COUNT(*) FROM strategy_decision_logs WHERE ... GROUP BY reason ORDER BY COUNT(*) DESC LIMIT 5;"`——确认 `_log` 错误不在其中，且策略产生决策。
-- [ ] **`_portfolio_concentration_gate` 方向饱和检测**：简化 gate 代码时，`if not has_position and side_count >= MAX_DIRECTIONAL_POSITIONS` 会跳过加仓的方向检测。应同时检查 `has_position and same_side` 的加仓情况。详见 [references/reward-risk-ladder-mismatch.md](references/reward-risk-ladder-mismatch.md)。
-- [ ] **`strategy_sdk.candidate()` score 截断**：SDK 的 `candidate(score=...)` 内部 clamp 到 [0, 100]，策略传入 >100 的 score 会被截断。策略在 `build_signals_from_context()` 中从多个组件重算最终 score（最高 120），所以影响可控（candidate_score 只贡献 30%）。详见 [references/discover-runtime-error-debug.md](references/discover-runtime-error-debug.md)。
+- [ ] **`_portfolio_concentration_gate` 方向饱和检测**：简化 gate 代码时，`if not has_position and side_count >= MAX_DIRECTIONAL_POSITIONS` 会跳过加仓的方向检测。应同时检查 `has_position and same_side` 的加仓情况。
+- [ ] **`strategy_sdk.candidate()` score 截断**：SDK 的 `candidate(score=...)` 内部 clamp 到 [0, 100]，策略传入 >100 的 score 会被截断。策略在 `build_signals_from_context()` 中从多个组件重算最终 score（最高 120），所以影响可控（candidate_score 只贡献 30%）。
 
 ## 自动投递候选包到生产
 
@@ -460,19 +460,19 @@ GROUP BY reason_code ORDER BY cnt DESC;
 - `invalid_json`: data_dependencies 非 RFC3339 时间戳
 - `signal_validation_failed`: strategy_id 未注册或 stop_price=0
 - `market_seq_too_old`: expire_ms 太小
-- `min_reward_risk`: 盈亏比不达标。Go 后端 `RewardRiskRatio()` 只用第一档止盈 TP1 做校验（不是梯子加权平均）。检查 `basic_trade_params()` 中的 `min_reward_risk` 值——必须等于 `tp1_ratio`（= 1.5），不是加权平均。详见 [references/reward-risk-ladder-mismatch.md](references/reward-risk-ladder-mismatch.md)。
+- `min_reward_risk`: 盈亏比不达标。Go 后端 `RewardRiskRatio()` 只用第一档止盈 TP1 做校验（不是梯子加权平均）。检查 `basic_trade_params()` 中的 `min_reward_risk` 值——必须等于 `tp1_ratio`（= 1.5），不是加权平均。
 
 ### 6. 排查致命错误模式
 
-**account_risk_budget_missing**: overlay 失败 → 全部 NO_TRADE。全量统一 reason（无其他 gate 触发）且 context API 有 budget 数据 → NATS 投递路径断裂，根因通常是 Binance API 连接问题。重启 worker 修复。详见 [references/budget-missing-triage.md](references/budget-missing-triage.md)。
-**SlowConsumer**: `strategy.universe.delta` 订阅 → `discover()` 执行过慢→事件循环饥饿。修复：`discover()` 入口加 3 秒最小间隔（`_last_discover_at` + 缓存 `_last_discover_result`），CPU 从 87% 降到 10.8%，决策率从 280/s 降到 53/s 但信号持续产出。详见 [references/discover-rate-limiting.md](references/discover-rate-limiting.md)。\n**信号冷却失效（同标的重复信号）**: `strategy_decision_logs` 中同一标的 5 分钟内出现 8 条 SIGNAL。`self._last_signal_symbol_at` 在异步 NATS 事件循环中非线程安全——多协程同时读取 0 后各自发射信号。诊断 SQL：`SELECT created_at, EXTRACT(EPOCH FROM created_at - LAG(created_at) OVER (ORDER BY created_at)) as gap_s FROM strategy_decision_logs WHERE strategy_id='...' AND decision='SIGNAL' AND created_at > now() - interval '10 minutes' ORDER BY created_at;`，如果 gap_s 频繁 <120，冷却失效。修复：`threading.Lock` 包裹冷却 check+write，保证原子性。详见 [references/signal-cooldown-race-condition.md](references/signal-cooldown-race-condition.md)。
-- **signals 全 rejected（min_reward_risk 不匹配）**: strategy_decision_logs 有 SIGNAL，但 signals 表 status=rejected → 查 trade_params 中 TP 梯子价格和 min_reward_risk 约束。TP 梯子是两档（1.5x + reward_risk），加权平均 RR 常低于 min_reward_risk。详见 [references/reward-risk-ladder-mismatch.md](references/reward-risk-ladder-mismatch.md)。
+**account_risk_budget_missing**: overlay 失败 → 全部 NO_TRADE。全量统一 reason（无其他 gate 触发）且 context API 有 budget 数据 → NATS 投递路径断裂，根因通常是 Binance API 连接问题。重启 worker 修复。
+**SlowConsumer**: `strategy.universe.delta` 订阅 → `discover()` 执行过慢→事件循环饥饿。修复：`discover()` 入口加 3 秒最小间隔（`_last_discover_at` + 缓存 `_last_discover_result`），CPU 从 87% 降到 10.8%，决策率从 280/s 降到 53/s 但信号持续产出。\n**信号冷却失效（同标的重复信号）**: `strategy_decision_logs` 中同一标的 5 分钟内出现 8 条 SIGNAL。`self._last_signal_symbol_at` 在异步 NATS 事件循环中非线程安全——多协程同时读取 0 后各自发射信号。诊断 SQL：`SELECT created_at, EXTRACT(EPOCH FROM created_at - LAG(created_at) OVER (ORDER BY created_at)) as gap_s FROM strategy_decision_logs WHERE strategy_id='...' AND decision='SIGNAL' AND created_at > now() - interval '10 minutes' ORDER BY created_at;`，如果 gap_s 频繁 <120，冷却失效。修复：`threading.Lock` 包裹冷却 check+write，保证原子性。
+- **signals 全 rejected（min_reward_risk 不匹配）**: strategy_decision_logs 有 SIGNAL，但 signals 表 status=rejected → 查 trade_params 中 TP 梯子价格和 min_reward_risk 约束。TP 梯子是两档（1.5x + reward_risk），加权平均 RR 常低于 min_reward_risk。
 **账户满仓死锁**: total_exposure>100%, remaining_budget=0
-**仓位轮换死锁（市场反弹时零多单）**: MAX_DIRECTIONAL_POSITIONS + MAX_HIGH_BETA_POSITIONS 双封顶，持仓全亏损中→无法开新仓。见 [references/position-gate-deadlock-reversal.md](references/position-gate-deadlock-reversal.md)
+**仓位轮换死锁（市场反弹时零多单）**: MAX_DIRECTIONAL_POSITIONS + MAX_HIGH_BETA_POSITIONS 双封顶，持仓全亏损中→无法开新仓。见
 **候选池反复出同一 symbol 且持续 `same_side_add_disabled_by_risk_config` / `add_requires_min_float_profit`**:
-  → discover() 未过滤已持仓 symbol。discover() 只有 universe 数据、无权访问 `context["owned_position"]`。修复：在 discover() 中读取 `self._positions_cache`，已持同方向 symbol+side 直接跳过 candidate。详见 [references/discover-position-blindness.md](references/discover-position-blindness.md)。
+→ discover() 未过滤已持仓 symbol。discover() 只有 universe 数据、无权访问 `context["owned_position"]`。修复：在 discover() 中读取 `self._positions_cache`，已持同方向 symbol+side 直接跳过 candidate。
 
-**持仓管理死代码（discover 过滤切断退出路径）**:\n  → `_candidate_already_held()` 在 discover 中过滤已持仓 symbol 后，`build_signals_from_context()` 不会被触发 → `_maybe_close_position()` 永不被调用 → **时间止损、反向退出全部是死代码**。持仓管理的调用必须独立于候选流，不应依赖 discover() 产出候选。详见 [references/position-management-dead-code.md](references/position-management-dead-code.md)。\n\n**持仓监控实现 pitfall（process restart 丢失 `_position_entry_at`）**:\n  → `_position_entry_at` 是内存变量，进程重启后被置空 → 时间止损永不会触发。修复：从 `execution_position_basis.updated_at` 通过 DB 查询还原。详见 [references/position-monitoring-implementation.md](references/position-monitoring-implementation.md)。\n\n**持仓监控实现 pitfall（Go context overlay 缺少 `updated_at`）**:\n  → `positionMap` 在 Go 端不包含 `updated_at` 字段 → context 缓存数据无开仓时间 → `_seed_entry_times()` 无时间可播种 → `_position_entry_at` 永远为空。必须将 DB fallback 查 entry_time 作为冗余路径。见 [references/position-monitoring-implementation.md](references/position-monitoring-implementation.md)。\n\n**持仓监控实现 pitfall（速率限制器共用字典冲突）**:\n  → 当 discover() 和 build_signals_context() 共用同一个 `_last_position_monitor_at` 字典时，discover 每次发射候选都重置时间戳 → build_signals_context 的速率检查永远看到"刚被 discover 重置"→永远被限流。修复：仅依赖 discover 侧的 60s 发射间隔，不在 build_signals_context 加额外速率限制。见 [references/position-monitoring-implementation.md](references/position-monitoring-implementation.md)。
+**持仓管理死代码（discover 过滤切断退出路径）**:\n  → `_candidate_already_held()` 在 discover 中过滤已持仓 symbol 后，`build_signals_from_context()` 不会被触发 → `_maybe_close_position()` 永不被调用 → **时间止损、反向退出全部是死代码**。持仓管理的调用必须独立于候选流，不应依赖 discover() 产出候选。\n\n**持仓监控实现 pitfall（process restart 丢失 `_position_entry_at`）**:\n  → `_position_entry_at` 是内存变量，进程重启后被置空 → 时间止损永不会触发。修复：从 `execution_position_basis.updated_at` 通过 DB 查询还原。\n\n**持仓监控实现 pitfall（Go context overlay 缺少 `updated_at`）**:\n  → `positionMap` 在 Go 端不包含 `updated_at` 字段 → context 缓存数据无开仓时间 → `_seed_entry_times()` 无时间可播种 → `_position_entry_at` 永远为空。必须将 DB fallback 查 entry_time 作为冗余路径。见。\n\n**持仓监控实现 pitfall（速率限制器共用字典冲突）**:\n  → 当 discover() 和 build_signals_context() 共用同一个 `_last_position_monitor_at` 字典时，discover 每次发射候选都重置时间戳 → build_signals_context 的速率检查永远看到"刚被 discover 重置"→永远被限流。修复：仅依赖 discover 侧的 60s 发射间隔，不在 build_signals_context 加额外速率限制。见。
 
 **候选池始终为空但无 exception 日志**:
   1. 先验证策略是否加载：`cd <release_dir> && python3 -c "from runtime.strategy_manager import load_enabled_strategies; h,e=load_enabled_strategies(); print(len(h),len(e))"`
@@ -480,16 +480,14 @@ GROUP BY reason_code ORDER BY cnt DESC;
   3. 若 Handles=1 仍无 candidate → 查 discover() 过滤逻辑（见下方 discovery 死寂排查）
 
 **discover() 持续报错但 SIGNAL 仍有产出**: 候选 TTL（120-300s）+ rate limit 机制让旧候选存活。discover() 失败后 pool 不更新，旧候选逐渐过期后信号停止。诊断方法：
-  - 查 process start time vs file modification time: `ps -o lstart= -p <PID>` vs `stat -f "%Sm" <file>`。如果进程启动早于文件部署时间 → 文件覆写竞态（策略文件在模块加载期间被覆盖）。详见 [references/discover-runtime-error-debug.md](references/discover-runtime-error-debug.md)。
+- 查 process start time vs file modification time: `ps -o lstart= -p <PID>` vs `stat -f "%Sm" <file>`。如果进程启动早于文件部署时间 → 文件覆写竞态（策略文件在模块加载期间被覆盖）。
   - 查项目源码 vs 生产文件是否一致：`diff $PROJECT_ROOT/strategy/strategies/candidates/<file>.py /opt/homebrew/var/crypto-trader/strategies/enabled/<file>.py`
   - 确认 SIGNAL 时间戳是否早于当前 >2min：`SELECT created_at FROM strategy_decision_logs WHERE decision='SIGNAL' ORDER BY created_at DESC LIMIT 1;`
-  - 关键经验：`name 'time' is not defined` 类错误无法在隔离环境复现时，同代码重启后可能自动消失（文件覆写竞态）。详见 [references/discover-runtime-error-debug.md](references/discover-runtime-error-debug.md)。
-
-详见 [references/production-db-quick-diagnosis.md](references/production-db-quick-diagnosis.md)。
+- 关键经验：`name 'time' is not defined` 类错误无法在隔离环境复现时，同代码重启后可能自动消失（文件覆写竞态）。
 
 ### 运行时健康检查
 
-当用户问"策略是否正常"时，按 [references/production-runtime-diagnosis.md](references/production-runtime-diagnosis.md) 的 6 层检查清单执行：进程层→策略加载层→决策产出层→NATS 连通层→账户层→故障模式速查。核心查询：
+当用户问"策略是否正常"时，按 的 6 层检查清单执行：进程层→策略加载层→决策产出层→NATS 连通层→账户层→故障模式速查。核心查询：
 
 - `strategy_decision_logs` 聚合：`SELECT reason, COUNT(*) ... GROUP BY reason` 直接揭示为什么没信号
 - macOS `sample <PID>` 探查无日志进程的调用栈
@@ -498,19 +496,19 @@ GROUP BY reason_code ORDER BY cnt DESC;
 
 ### 杠杆与下单金额
 
-- **杠杆**：`pick_leverage()` 动态计算，从 `risk_limits.min/max_leverage` 读范围，按阶段/分数/波动率调参。保守阶段（neutral_probe 等）→ 固定 `min_leverage`。详见 [references/leverage-dynamic-calculation.md](references/leverage-dynamic-calculation.md)。
-- **动态下单金额**：`desired_notional = min(risk/stop, equity × max_order_pct)`，其中 `max_order_pct = risk_limits.max_order_notional_pct / 100`。后端修改后策略自动跟随，无需改代码。⚠️ 代码中的 `, 40` 只是 fallback 默认值，实际后端值必须从 `strategy_risk_allocations` 表查询——不要假设。详见 [references/max-order-notional-dynamic.md](references/max-order-notional-dynamic.md)。
+- **杠杆**：`pick_leverage()` 动态计算，从 `risk_limits.min/max_leverage` 读范围，按阶段/分数/波动率调参。保守阶段（neutral_probe 等）→ 固定 `min_leverage`。
+- **动态下单金额**：`desired_notional = min(risk/stop, equity × max_order_pct)`，其中 `max_order_pct = risk_limits.max_order_notional_pct / 100`。后端修改后策略自动跟随，无需改代码。⚠️ 代码中的 `, 40` 只是 fallback 默认值，实际后端值必须从 `strategy_risk_allocations` 表查询——不要假设。
 - **下单金额完整计算链**：`risk_pct = clamp(2.0 + (score-55)×0.06, 2.0, 4.0)`（分数动态浮动）→ `target_risk_amount = equity × risk_pct/100` → `desired_notional = target_risk / stop_pct` → 多重封顶（`effective_order_cap`、`remaining_symbol_cap`、`remaining_total_cap`、`leverage_notional_cap` 取 min）→ `quantity = max_notional / price`。改 `risk_pct` 直接影响仓位，改止损宽度反向影响仓位——止损放宽后必须同步提 `risk_pct` 否则仓位同比例缩小。
-- **⚠️ 小账户 notional 地板陷阱**：`basic_trade_params()` 用 `notional = max(equity × budget_pct%, min_notional)`。对小账户（如 $100），`equity × 4% = $4` < min_notional=$10 → notional 被地板钉死在 $10。**正确公式是 `risk_amount / stop_pct`**。详见 [references/notional-sizing-small-account.md](references/notional-sizing-small-account.md)。
-- **加仓**：专业金字塔加仓 — 7 层 gate（浮盈≥1.5%、趋势续、book 撑、回调入场、阶段过滤、敞口检查、亏损保护）+ 4 级冷却分层（90/180/240/120min），budget联动 `max_add_count`（1/(1+n)递减），参数从 backend 动态读取不写死。详见 [references/position-management-add-gate.md](references/position-management-add-gate.md)。预算联动细节见 [references/dynamic-add-budget-linkage.md](references/dynamic-add-budget-linkage.md)。
-- **加仓评估冷却**：加仓被拒后对同一 `symbol:side` 设 300s 冷却——冷却期内跳过全部 7 层检查，直接返回 `add_in_cooldown`。实测减少 86% 无效评估。详见 [references/add-check-cooldown.md](references/add-check-cooldown.md)。
-- **效率漏斗**：discover() 源头 candidate 质量直接决定 context 评估量（50万+/h decision logs）。收紧源头（score floor↑、candidate limit↓、TTL动态化、方向预筛选）比加 gate 更有效。详见 [references/efficiency-funnel-source-quality.md](references/efficiency-funnel-source-quality.md)。
-- **仓位轮换**：满仓时按 PnL-梯度判定轮换（小盈需 ≥84 分，中盈 ≥82 分，大盈 ≥80 分），反转阶段 +2 虚拟加分。优先换出最小盈仓（落袋为安）。调用 `GET /api/v1/agent/positions` 获取全策略持仓做全局比较，15s TTL 缓存不 flooding。⚠️ close 信号必须手动构建（不用 signal_envelope 以免 cross-symbol price_ref 错位），且 manifest 需 `max_signals_per_candidate: 2` 防止双信号截断。排查链路见 [references/position-rotation.md](references/position-rotation.md)，死锁诊断见 [references/position-rotation-deadlock.md](references/position-rotation-deadlock.md)。
-- **止损波动率**：双源波动率代理（24h change + 1h trend），替代单源 24h change。短时剧烈波动的币自动放宽止损，已冷却的币自动收紧。⚠️ **分母 850 陷阱**：生产验证分母 850 导致止损 0.7-1.0%，配合 11-23x 杠杆必被扫。校准值应为 150-200。详见 [references/stop-formula-dual-volatility.md](references/stop-formula-dual-volatility.md)。
-- **阶段多样性**：加 `early_trend` 过渡阶段解决全 short 单一信号问题 + long book gate 放宽 ±0.03 中性区。详见 [references/stage-classification-diversity.md](references/stage-classification-diversity.md)。
-- **阶段差异化参数**：止损、移动止盈、盈亏比按 stage 分化——reversal 给宽止损+runner trail，trend_continuation 给紧止损+标准 trail。避免一刀切导致的 reversal 被扫 / trend 跑不掉。详见 [references/stage-specific-parameters.md](references/stage-specific-parameters.md)。
-- **阶段诊断**：信号阶段分布分析、死代码检查（sweep_reclaim）、BTC regime gate 影响、stage_bonus 配置。详见 [references/stage-diversity-diagnosis.md](references/stage-diversity-diagnosis.md)。
-- **Gate 迭代校准**：query→fix→requery 循环，连锁反应观察，gate 放宽优先级排序。详见 [references/gate-calibration-iterative.md](references/gate-calibration-iterative.md)。
+- **⚠️ 小账户 notional 地板陷阱**：`basic_trade_params()` 用 `notional = max(equity × budget_pct%, min_notional)`。对小账户（如 $100），`equity × 4% = $4` < min_notional=$10 → notional 被地板钉死在 $10。**正确公式是 `risk_amount / stop_pct`**。
+- **加仓**：专业金字塔加仓 — 7 层 gate（浮盈≥1.5%、趋势续、book 撑、回调入场、阶段过滤、敞口检查、亏损保护）+ 4 级冷却分层（90/180/240/120min），budget联动 `max_add_count`（1/(1+n)递减），参数从 backend 动态读取不写死。预算联动细节见。
+- **加仓评估冷却**：加仓被拒后对同一 `symbol:side` 设 300s 冷却——冷却期内跳过全部 7 层检查，直接返回 `add_in_cooldown`。实测减少 86% 无效评估。
+- **效率漏斗**：discover() 源头 candidate 质量直接决定 context 评估量（50万+/h decision logs）。收紧源头（score floor↑、candidate limit↓、TTL动态化、方向预筛选）比加 gate 更有效。
+- **仓位轮换**：满仓时按 PnL-梯度判定轮换（小盈需 ≥84 分，中盈 ≥82 分，大盈 ≥80 分），反转阶段 +2 虚拟加分。优先换出最小盈仓（落袋为安）。调用 `GET /api/v1/agent/positions` 获取全策略持仓做全局比较，15s TTL 缓存不 flooding。⚠️ close 信号必须手动构建（不用 signal_envelope 以免 cross-symbol price_ref 错位），且 manifest 需 `max_signals_per_candidate: 2` 防止双信号截断。排查链路见，死锁诊断见。
+- **止损波动率**：双源波动率代理（24h change + 1h trend），替代单源 24h change。短时剧烈波动的币自动放宽止损，已冷却的币自动收紧。⚠️ **分母 850 陷阱**：生产验证分母 850 导致止损 0.7-1.0%，配合 11-23x 杠杆必被扫。校准值应为 150-200。
+- **阶段多样性**：加 `early_trend` 过渡阶段解决全 short 单一信号问题 + long book gate 放宽 ±0.03 中性区。
+- **阶段差异化参数**：止损、移动止盈、盈亏比按 stage 分化——reversal 给宽止损+runner trail，trend_continuation 给紧止损+标准 trail。避免一刀切导致的 reversal 被扫 / trend 跑不掉。
+- **阶段诊断**：信号阶段分布分析、死代码检查（sweep_reclaim）、BTC regime gate 影响、stage_bonus 配置。
+- **Gate 迭代校准**：query→fix→requery 循环，连锁反应观察，gate 放宽优先级排序。
 - **风控参数数据库化**：所有风控参数（`max_positions`、`max_order_notional_pct`、`allocation_pct`、`max_add_count` 等）存储在 `strategy_risk_allocations` 表。Go 后端 `PortfolioStrategyContextEnricher` 通过 `allocationStore` 读取，1 秒 TTL 缓存。通过 `UPDATE strategy_risk_allocations SET ... WHERE strategy_id='...' AND venue='live'` 直接生效，无需重启进程。
 
 ### 小账户激进参数校准（"以小博大"）
@@ -520,7 +518,7 @@ $99 账户的默认参数（1% risk, 3% max, 1.25x trail）过于保守。用户
 1. **风险预算放大**：`MIN_TRADE_RISK_PCT` 从 1.0→2.0（每单最少冒 $2）、`MAX_TRADE_RISK_PCT` 从 3.0→8.0（高分信号可冒 $8）。公式斜率从 0.06→0.08，base 从 1.0→2.0。
 2. **方向上限匹配**：小账户 `MAX_DIRECTIONAL_POSITIONS` 应 ≥ 目标仓位数。$99 账户方向上限定 2 → 释放 3 个仓位，`notional = 3×$30 = $90 < equity×1.5` 为经验安全线。
 3. **高β上限方向感知**：`_portfolio_concentration_gate` 加 `opposite_side_exempt` 允许反方向高 β 仓位。持有 2short 时不再拦截 long 候选。
-4. **trailing_stop 紧跟**：deep_reversal 的 `activation=stop_pct×0.5`（从 ×1.25 收紧）、`trail_width=stop_pct×0.5`。10% 行情可捕捉 6.7% 而非 1.6%。详见 [references/trailing-stop-capture-pitfall.md](references/trailing-stop-capture-pitfall.md)。
+4. **trailing_stop 紧跟**：deep_reversal 的 `activation=stop_pct×0.5`（从 ×1.25 收紧）、`trail_width=stop_pct×0.5`。10% 行情可捕捉 6.7% 而非 1.6%。
 
 **诊断信号**：用户说"仓位好低""止盈太宽""浪费机会"时，先计算 `notional = equity × risk_pct / stop_pct` 确认数学链，再调上方参数。
 
@@ -536,7 +534,7 @@ APRUSDT 短空: entry=$0.15951, 跌至 $0.14347 (-10.05%)
   trail_stop = $0.14347 × (1+0.0375) = $0.14885 → 吃 6.7% 利润
 ```
 
-**规则**：`trail_width > stop_pct` 时 trail 宽度大于止损 → 永远吃不到利润。trail_width 应 ≤ stop_pct×0.5。详见 [references/trailing-stop-capture-pitfall.md](references/trailing-stop-capture-pitfall.md)。
+**规则**：`trail_width > stop_pct` 时 trail 宽度大于止损 → 永远吃不到利润。trail_width 应 ≤ stop_pct×0.5。
 
 ### long 侧 reversal stage 分类器的 book 时机陷阱
 
@@ -574,7 +572,7 @@ if signed_change > 3.0 and directional_book > 0.10 and spread_bps <= 15 and bias
 
 **阈值选择理由：** pos_4h<0.30 即 4h 范围下 30% 分位。DOODUSDT(0.25) 被拦，1000000BOBUSDT(0.33) 放行。如需更严格提到 0.40。
 
-**诊断信号：** 当用户说"为什么追空"时，查 SIGNAL 的 `pos_4h`。若 pos_4h < 0.40 说明入场点在底部区域。参考 [references/breakout-position-guard.md](references/breakout-position-guard.md)。
+**诊断信号：** 当用户说"为什么追空"时，查 SIGNAL 的 `pos_4h`。若 pos_4h < 0.40 说明入场点在底部区域。参考。
 
 **双向检查清单**：
 - short reversal：`directional_book > 0.02`（book 已翻空）→ 合理，冲顶后 book 自然翻空
@@ -584,58 +582,10 @@ if signed_change > 3.0 and directional_book > 0.10 and spread_bps <= 15 and bias
 
 ## 参考
 
-- 交易复盘（Trade Post-Mortem）：[references/trade-postmortem.md](references/trade-postmortem.md) — 用于"为什么做多/做空XX"类问题，系统性追溯持仓的出入场原因和市场分析
-- 详细流程：[references/authoring-workflow.zh-CN.md](references/authoring-workflow.zh-CN.md)
-- **方向变换值验证**：[references/directional-sign-verification.md](references/directional-sign-verification.md)
-- 安全边界：[references/safety-boundaries.zh-CN.md](references/safety-boundaries.zh-CN.md)
+- 策略编写流程：[references/authoring-workflow.zh-CN.md](references/authoring-workflow.zh-CN.md)
 - Agent API：[references/agent-api.zh-CN.md](references/agent-api.zh-CN.md)
+- 安全边界：[references/safety-boundaries.zh-CN.md](references/safety-boundaries.zh-CN.md)
 - StrategySignalEvent 与 trade_params：[references/trade-plan-signal-parameter-design.md](references/trade-plan-signal-parameter-design.md)
-- 持仓感知交易计划：[references/position-aware-trading-plan.md](references/position-aware-trading-plan.md)
-- 生产 DB 快速诊断：[references/production-db-quick-diagnosis.md](references/production-db-quick-diagnosis.md)
-- 策略胜率诊断与优化：[references/strategy-optimization-playbook.md](references/strategy-optimization-playbook.md)
-- 胜率分析 SQL 全集：[references/win-rate-analysis-queries.md](references/win-rate-analysis-queries.md)
-- **移动止盈吃不到大肉**：[references/trailing-stop-runner-problem.md](references/trailing-stop-runner-problem.md)
-- **反转优先阶段分类器**：[references/reversal-first-stage-architecture.md](references/reversal-first-stage-architecture.md)
-- **加仓评估冷却**：[references/add-check-cooldown.md](references/add-check-cooldown.md)
-- 价格量化陷阱：[references/price-quantization-pitfalls.md](references/price-quantization-pitfalls.md)
-- risk_budget sizing 瓶颈：[references/risk-budget-sizing-pitfall.md](references/risk-budget-sizing-pitfall.md)
-- risk_budget 公式倒置：[references/risk-budget-formula-inversion.md](references/risk-budget-formula-inversion.md)
-- close_ratio 尾盘残留：[references/close-ratio-ladder-tail.md](references/close-ratio-ladder-tail.md)
-- change_bonus 衰减模式：[references/change-bonus-pattern.md](references/change-bonus-pattern.md)
-- Manifest hash 陷阱：[references/manifest-hash-silent-failure.md](references/manifest-hash-silent-failure.md) — ⚠️ glob `.manifest.json` 不要带 `.py` 前缀
-- Signal 重复推送冷却：[references/signal-dedup-cooldown.md](references/signal-dedup-cooldown.md)
-- 生产运行时诊断：[references/production-runtime-diagnosis.md](references/production-runtime-diagnosis.md)
-- 动态杠杆计算：[references/leverage-dynamic-calculation.md](references/leverage-dynamic-calculation.md)
-- 持仓管理与加仓门禁：[references/position-management-add-gate.md](references/position-management-add-gate.md)
-- 仓位轮换（落袋为安）：[references/position-rotation.md](references/position-rotation.md)
-- **仓位轮换死锁（市场反弹时零多单）**：[references/position-gate-deadlock-reversal.md](references/position-gate-deadlock-reversal.md)
-- **仓位死锁诊断与解除**：[references/position-gate-deadlock-reversal.md](references/position-gate-deadlock-reversal.md) — 当所有决策被方向 gate+高β gate 同时封死时的三层修复链（gate→stage→score）
-- **仓位轮换死锁诊断（分数天花板 vs 绝对阈值）**：[references/position-rotation-deadlock.md](references/position-rotation-deadlock.md)
-- 动态下单金额封顶：[references/max-order-notional-dynamic.md](references/max-order-notional-dynamic.md)
-- 加仓预算动态联动：[references/dynamic-add-budget-linkage.md](references/dynamic-add-budget-linkage.md)
-- 效率漏斗（源头质量）：[references/efficiency-funnel-source-quality.md](references/efficiency-funnel-source-quality.md)
-- **反转阶段 book 入场时机**：[references/stage-reversal-book-timing.md](references/stage-reversal-book-timing.md) — reversal 不应等 book 翻转，而应在原方向仍占优时提前入场
-- **24h 成交量过滤优化**：[references/volume-filter-optimization.md](references/volume-filter-optimization.md) — 跨 discover cycle volume 动量追踪、context 动态流动性对比、liquidity_quality 幂律缩放、trade gate/discover 一致性修复
-- 止损波动率：[references/stop-formula-dual-volatility.md](references/stop-formula-dual-volatility.md)
-- **flow_score 反转惩罚与修复**：[references/flow-score-reversal-handicap.md](references/flow-score-reversal-handicap.md) — flow_score 动量跟随评分对反转入场施压，以及 stage-aware abs() 修复方案
-- **止盈全平约定**：[references/close-ratio-ladder-tail.md](references/close-ratio-ladder-tail.md) — `close_ratio: "1.0"` 哨兵值触发 Binance `ClosePosition=true`。止盈梯子在 `strategy_sdk.py` `basic_trade_params()` 构建（2 级梯子：0.5 → 1.0），不在策略文件。**不要**因为误解把梯子改成 1 级——最后一档 `1.0` 已经保证全清。
-- **反转入场仓位天然小**：deep_reversal stop=7-8% vs breakout stop=4%。相同 risk_pct(2%) 下，`notional = risk/stop` 导致反转仓位只有动量的 50-60%。用户问"为什么仓位好低"时先算这公式，不是 bug。详见 [references/position-gate-deadlock-reversal.md](references/position-gate-deadlock-reversal.md)。
-- **Gate 连锁反应**：修复一个 gate 后下层 gate 成为新瓶颈是正常现象。重新 query decision_logs 确认新主导拒绝原因，继续修。不要惊慌回滚。详见 [references/position-gate-deadlock-reversal.md](references/position-gate-deadlock-reversal.md)。
-- 阶段多样性诊断与修复：[references/stage-diversity-diagnosis.md](references/stage-diversity-diagnosis.md)
-- BTC regime 梯度惩罚：[references/btc-regime-graduated-penalty.md](references/btc-regime-graduated-penalty.md)
-- **信号拒绝诊断**：[references/signal-rejection-diagnosis.md](references/signal-rejection-diagnosis.md) — 链路排查、invalid_json、quantization、min_reward_risk
-- **账户未配置诊断**：[references/account-not-configured.md](references/account-not-configured.md) — signals 全 rejected 时检查风控配置
-- **加权平均盈亏比**：[references/reward-risk-ladder-mismatch.md](references/reward-risk-ladder-mismatch.md) — TP 梯子加权平均 vs min_reward_risk
-- **intent 格式**：[references/intent-format.md](references/intent-format.md) — `_intent_for_owned_position` 返回值不被后端识别
-- **budget_missing 全量诊断**：[references/budget-missing-triage.md](references/budget-missing-triage.md) — Binance API → overlay → NATS 链路排查
-- **小型账户参数配置**：[references/small-account-config.md](references/small-account-config.md) — $100 账户的参数适配、轮换可行性、信号密度控制
-- **neutral_probe 止损放大与止盈膨胀**：[references/neutral-probe-stop-amplification.md](references/neutral-probe-stop-amplification.md)
-- **discover() 持仓盲视**：[references/discover-position-blindness.md](references/discover-position-blindness.md) — discover() 无权限访问持仓信息，导致已持仓 symbol 反复出 candidate，以及 `_positions_cache` 修复模式
-- **breakout 位置感知保护**：[references/breakout-position-guard.md](references/breakout-position-guard.md) — pos_4h < 0.30 不追空，pos_4h > 0.70 不追涨
-- **每日复盘 Cron Job**：[references/daily-review-cron.md](references/daily-review-cron.md) — 生产 DB 查询模式、报告模板、安全约束
-- **reward/risk 梯子约束不匹配**：[references/reward-risk-ladder-mismatch.md](references/reward-risk-ladder-mismatch.md) — TP 梯子第一档止盈 RR 与 min_reward_risk 约束的不一致导致全部信号被后端拒绝（后端只用第一档 TP 校验，不是加权平均）
-- **discover() 侧向平衡**：[references/discover-side-balancing.md](references/discover-side-balancing.md) — _balanced_select() 强制 minority side ≥ 30%
-- **时间止损与硬冷却**：[references/position-time-stop-cooldown.md](references/position-time-stop-cooldown.md) — 60min 无盈利强制平仓 + 亏损后 15-30min symbol 硬冷却
-- **小账户 notional 地板问题**：[references/notional-sizing-small-account.md](references/notional-sizing-small-account.md) — min_notional 地板让小账户仓位只有 $10；正确公式是 risk_amount / stop_pct
 - **Go 后端校验模式**：[references/go-backend-validation-patterns.md](references/go-backend-validation-patterns.md) — 排查信号 reject 时直接读 Go 源码而不是从 DB 反推
+- **intent 格式**：[references/intent-format.md](references/intent-format.md) — `_intent_for_owned_position` 返回值不被后端识别
 - 模板：[templates/dynamic_strategy.py](templates/dynamic_strategy.py)
